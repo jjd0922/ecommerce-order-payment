@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: order-mysql
+    restart: always
+    environment:
+      MYSQL_DATABASE: order_db
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  mysql-data:

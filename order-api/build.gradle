@@ -11,7 +11,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-web'
 
-    runtimeOnly 'org.postgresql:postgresql'
+    runtimeOnly 'com.mysql:mysql-connector-j'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
