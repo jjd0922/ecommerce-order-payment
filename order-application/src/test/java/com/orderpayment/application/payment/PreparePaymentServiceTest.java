@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.orderpayment.application.common.port.out.CurrentTimePort;
+import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
 import com.orderpayment.application.payment.dto.PreparePaymentCommand;
@@ -13,6 +14,7 @@ import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.PreparePaymentService;
 import com.orderpayment.domain.common.DomainException;
+import com.orderpayment.domain.common.event.DomainEvent;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.inventory.Inventory;
 import com.orderpayment.domain.inventory.InventoryReservation;
@@ -44,6 +46,7 @@ class PreparePaymentServiceTest {
     private final FakeOrderPort orderPort = new FakeOrderPort();
     private final FakeInventoryReservationPort inventoryReservationPort = new FakeInventoryReservationPort();
     private final FakePaymentPort paymentPort = new FakePaymentPort();
+    private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
     private final PreparePaymentService service = new PreparePaymentService(
             orderPort,
             orderPort,
@@ -51,7 +54,8 @@ class PreparePaymentServiceTest {
             paymentPort,
             paymentPort,
             () -> paymentId,
-            () -> now
+            () -> now,
+            eventPublisher
     );
 
     @Test
@@ -69,6 +73,7 @@ class PreparePaymentServiceTest {
         assertEquals(3, inventoryReservationPort.inventory(productId).availableQuantity());
         assertEquals(2, inventoryReservationPort.inventory(productId).heldQuantity());
         assertEquals(1, inventoryReservationPort.reservations.size());
+        assertEquals(2, eventPublisher.events.size());
     }
 
     @Test
@@ -82,6 +87,7 @@ class PreparePaymentServiceTest {
         assertEquals(firstResult, secondResult);
         assertEquals(1, paymentPort.saveCount());
         assertEquals(1, inventoryReservationPort.reservations.size());
+        assertEquals(2, eventPublisher.events.size());
     }
 
     @Test
@@ -188,6 +194,16 @@ class PreparePaymentServiceTest {
 
         int saveCount() {
             return saveCount.get();
+        }
+    }
+
+    private static class FakeDomainEventPublisher implements DomainEventPublisherPort {
+
+        private final List<DomainEvent> events = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        public void publishAll(List<DomainEvent> events) {
+            this.events.addAll(events);
         }
     }
 }
