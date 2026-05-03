@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: ecommerce-order-payment
+  datasource:
+    url: jdbc:postgresql://localhost:5432/order_payment
+    username: order_payment
+    password: order_payment
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

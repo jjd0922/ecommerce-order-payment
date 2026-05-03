@@ -1,0 +1,9 @@
+dependencies {
+    implementation project(':order-application')
+    implementation project(':order-domain')
+
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework:spring-context'
+
+    runtimeOnly 'org.postgresql:postgresql'
+}
