@@ -10,12 +10,35 @@ import org.junit.jupiter.api.Test;
 class InventoryTest {
 
     @Test
-    void deductsQuantity() {
+    void holdsQuantity() {
         Inventory inventory = Inventory.of(ProductId.newId(), 10);
 
-        inventory.deduct(3);
+        inventory.hold(3);
 
-        assertEquals(7, inventory.quantity());
+        assertEquals(7, inventory.availableQuantity());
+        assertEquals(3, inventory.heldQuantity());
+    }
+
+    @Test
+    void releasesHeldQuantity() {
+        Inventory inventory = Inventory.of(ProductId.newId(), 10);
+        inventory.hold(3);
+
+        inventory.release(2);
+
+        assertEquals(9, inventory.availableQuantity());
+        assertEquals(1, inventory.heldQuantity());
+    }
+
+    @Test
+    void confirmsHeldQuantity() {
+        Inventory inventory = Inventory.of(ProductId.newId(), 10);
+        inventory.hold(3);
+
+        inventory.confirm(3);
+
+        assertEquals(7, inventory.availableQuantity());
+        assertEquals(0, inventory.heldQuantity());
     }
 
     @Test
@@ -28,6 +51,6 @@ class InventoryTest {
     @Test
     void rejectsInvalidQuantity() {
         assertThrows(DomainException.class, () -> Inventory.of(ProductId.newId(), -1));
-        assertThrows(DomainException.class, () -> Inventory.of(ProductId.newId(), 1).deduct(0));
+        assertThrows(DomainException.class, () -> Inventory.of(ProductId.newId(), 1).hold(0));
     }
 }
