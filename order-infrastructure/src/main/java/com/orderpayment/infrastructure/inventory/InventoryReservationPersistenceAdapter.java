@@ -9,23 +9,17 @@ import com.orderpayment.domain.inventory.InventoryReservationStatus;
 import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.product.ProductId;
 import java.time.LocalDateTime;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
+@RequiredArgsConstructor
 public class InventoryReservationPersistenceAdapter
         implements InventoryReservationCommandPort, InventoryReservationRecoveryPort {
 
     private final InventoryJpaRepository inventoryJpaRepository;
     private final InventoryReservationJpaRepository inventoryReservationJpaRepository;
-
-    public InventoryReservationPersistenceAdapter(
-            InventoryJpaRepository inventoryJpaRepository,
-            InventoryReservationJpaRepository inventoryReservationJpaRepository
-    ) {
-        this.inventoryJpaRepository = inventoryJpaRepository;
-        this.inventoryReservationJpaRepository = inventoryReservationJpaRepository;
-    }
 
     @Override
     @Transactional

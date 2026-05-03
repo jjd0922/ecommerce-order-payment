@@ -9,16 +9,14 @@ import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentId;
 import java.util.Optional;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentCommandPort {
 
     private final PaymentJpaRepository paymentJpaRepository;
-
-    public PaymentPersistenceAdapter(PaymentJpaRepository paymentJpaRepository) {
-        this.paymentJpaRepository = paymentJpaRepository;
-    }
 
     @Override
     public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {

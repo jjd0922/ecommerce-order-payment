@@ -10,17 +10,15 @@ import com.orderpayment.domain.order.OrderItem;
 import com.orderpayment.domain.product.ProductId;
 import java.util.List;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
+@RequiredArgsConstructor
 public class OrderPersistenceAdapter implements OrderQueryPort, OrderCommandPort {
 
     private final OrderJpaRepository orderJpaRepository;
-
-    public OrderPersistenceAdapter(OrderJpaRepository orderJpaRepository) {
-        this.orderJpaRepository = orderJpaRepository;
-    }
 
     @Override
     @Transactional(readOnly = true)

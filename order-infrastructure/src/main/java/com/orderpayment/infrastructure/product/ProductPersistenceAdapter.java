@@ -6,16 +6,14 @@ import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.product.Product;
 import com.orderpayment.domain.product.ProductId;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class ProductPersistenceAdapter implements ProductQueryPort {
 
     private final ProductJpaRepository productJpaRepository;
-
-    public ProductPersistenceAdapter(ProductJpaRepository productJpaRepository) {
-        this.productJpaRepository = productJpaRepository;
-    }
 
     @Override
     public Product getProduct(ProductId productId) {
