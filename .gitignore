@@ -1,0 +1,15 @@
+.gradle/
+build/
+out/
+
+*.class
+*.log
+
+.idea/
+*.iml
+
+.env
+.env.*
+!.env.example
+
+docker/mysql/data/
