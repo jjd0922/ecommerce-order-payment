@@ -23,6 +23,10 @@ public class Order {
         return new Order(id, items, OrderStatus.CREATED);
     }
 
+    public static Order restore(OrderId id, List<OrderItem> items, OrderStatus status) {
+        return new Order(id, items, status);
+    }
+
     public OrderId id() {
         return id;
     }
