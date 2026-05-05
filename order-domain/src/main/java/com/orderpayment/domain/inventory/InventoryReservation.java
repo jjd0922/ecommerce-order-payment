@@ -41,6 +41,17 @@ public class InventoryReservation {
         return new InventoryReservation(id, orderId, productId, quantity, expiresAt, InventoryReservationStatus.HELD);
     }
 
+    public static InventoryReservation restore(
+            InventoryReservationId id,
+            OrderId orderId,
+            ProductId productId,
+            int quantity,
+            LocalDateTime expiresAt,
+            InventoryReservationStatus status
+    ) {
+        return new InventoryReservation(id, orderId, productId, quantity, expiresAt, status);
+    }
+
     public InventoryReservationId id() {
         return id;
     }
