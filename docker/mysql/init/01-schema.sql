@@ -78,3 +78,21 @@ CREATE TABLE IF NOT EXISTS payment (
         FOREIGN KEY (order_id)
         REFERENCES orders (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS outbox_event (
+    id VARCHAR(36) NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    aggregate_id VARCHAR(100) NOT NULL,
+    payload JSON NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    occurred_at DATETIME(6) NOT NULL,
+    published_at DATETIME(6) NULL,
+    retry_count INT NOT NULL,
+    last_error VARCHAR(1000) NULL,
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_outbox_event_status_occurred_at (status, occurred_at),
+    INDEX idx_outbox_event_aggregate_id (aggregate_id),
+    CONSTRAINT chk_outbox_event_retry_count
+        CHECK (retry_count >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
