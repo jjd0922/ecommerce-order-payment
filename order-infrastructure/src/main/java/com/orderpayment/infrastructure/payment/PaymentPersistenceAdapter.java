@@ -3,6 +3,7 @@ package com.orderpayment.infrastructure.payment;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.domain.common.Money;
+import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.payment.IdempotencyKey;
 import com.orderpayment.domain.payment.Payment;
@@ -17,6 +18,13 @@ import org.springframework.stereotype.Component;
 public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentCommandPort {
 
     private final PaymentJpaRepository paymentJpaRepository;
+
+    @Override
+    public Payment getPayment(PaymentId paymentId) {
+        return paymentJpaRepository.findById(paymentId.value().toString())
+                .map(this::toDomain)
+                .orElseThrow(() -> new DomainException("payment not found"));
+    }
 
     @Override
     public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {

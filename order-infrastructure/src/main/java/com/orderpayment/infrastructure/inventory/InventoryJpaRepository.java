@@ -32,4 +32,16 @@ public interface InventoryJpaRepository extends JpaRepository<InventoryJpaEntity
             @Param("productId") String productId,
             @Param("quantity") int quantity
     );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InventoryJpaEntity inventory
+            set inventory.heldQuantity = inventory.heldQuantity - :quantity
+            where inventory.productId = :productId
+              and inventory.heldQuantity >= :quantity
+            """)
+    int confirm(
+            @Param("productId") String productId,
+            @Param("quantity") int quantity
+    );
 }
