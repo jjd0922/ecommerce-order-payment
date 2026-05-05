@@ -79,4 +79,12 @@ public class InventoryReservationJpaEntity {
     public void expire() {
         this.status = InventoryReservationStatus.EXPIRED;
     }
+
+    public void confirm() {
+        this.status = InventoryReservationStatus.CONFIRMED;
+    }
+
+    public void release() {
+        this.status = InventoryReservationStatus.RELEASED;
+    }
 }

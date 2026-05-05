@@ -31,6 +31,16 @@ public class Payment {
         return new Payment(id, orderId, amount, idempotencyKey, PaymentStatus.READY);
     }
 
+    public static Payment restore(
+            PaymentId id,
+            OrderId orderId,
+            Money amount,
+            IdempotencyKey idempotencyKey,
+            PaymentStatus status
+    ) {
+        return new Payment(id, orderId, amount, idempotencyKey, status);
+    }
+
     public PaymentId id() {
         return id;
     }

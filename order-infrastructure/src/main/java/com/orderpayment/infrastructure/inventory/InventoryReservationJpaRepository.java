@@ -7,6 +7,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface InventoryReservationJpaRepository extends JpaRepository<InventoryReservationJpaEntity, String> {
 
+    List<InventoryReservationJpaEntity> findByOrderIdAndStatus(
+            String orderId,
+            InventoryReservationStatus status
+    );
+
     List<InventoryReservationJpaEntity> findByStatusAndExpiresAtBefore(
             InventoryReservationStatus status,
             LocalDateTime expiresAt

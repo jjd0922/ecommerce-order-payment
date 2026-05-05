@@ -22,6 +22,10 @@ public class Product {
         return new Product(id, name, price, true);
     }
 
+    public static Product restore(ProductId id, String name, Money price, boolean selling) {
+        return new Product(id, name, price, selling);
+    }
+
     public ProductId id() {
         return id;
     }

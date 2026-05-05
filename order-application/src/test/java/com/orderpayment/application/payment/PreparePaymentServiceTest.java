@@ -167,6 +167,16 @@ class PreparePaymentServiceTest {
             return reservation;
         }
 
+        @Override
+        public void confirmAll(List<InventoryReservation> reservations) {
+            reservations.forEach(InventoryReservation::confirm);
+        }
+
+        @Override
+        public void releaseAll(List<InventoryReservation> reservations) {
+            reservations.forEach(InventoryReservation::release);
+        }
+
         void save(Inventory inventory) {
             inventories.put(inventory.productId(), inventory);
         }
@@ -179,7 +189,17 @@ class PreparePaymentServiceTest {
     private static class FakePaymentPort implements PaymentQueryPort, PaymentCommandPort {
 
         private final Map<IdempotencyKey, Payment> payments = new ConcurrentHashMap<>();
+        private final Map<PaymentId, Payment> paymentsById = new ConcurrentHashMap<>();
         private final AtomicInteger saveCount = new AtomicInteger();
+
+        @Override
+        public Payment getPayment(PaymentId paymentId) {
+            Payment payment = paymentsById.get(paymentId);
+            if (payment == null) {
+                throw new DomainException("payment not found");
+            }
+            return payment;
+        }
 
         @Override
         public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
@@ -189,6 +209,7 @@ class PreparePaymentServiceTest {
         @Override
         public void savePayment(Payment payment) {
             payments.put(payment.idempotencyKey(), payment);
+            paymentsById.put(payment.id(), payment);
             saveCount.incrementAndGet();
         }
 
