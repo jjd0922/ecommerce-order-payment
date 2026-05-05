@@ -1,26 +1,22 @@
 package com.orderpayment.infrastructure.event;
 
-import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
-import com.orderpayment.domain.common.event.DomainEvent;
-import java.util.List;
+import com.orderpayment.infrastructure.outbox.OutboxEventJpaEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
-public class LoggingDomainEventPublisherAdapter implements DomainEventPublisherPort {
+public class LoggingDomainEventPublisherAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingDomainEventPublisherAdapter.class);
 
-    @Override
-    public void publishAll(List<DomainEvent> events) {
-        for (DomainEvent event : events) {
-            log.info(
-                    "domainEvent type={} aggregateId={} occurredAt={}",
-                    event.eventType(),
-                    event.aggregateId(),
-                    event.occurredAt()
-            );
-        }
+    public void publish(OutboxEventJpaEntity event) {
+        log.info(
+                "outboxEvent published id={} type={} aggregateId={} occurredAt={}",
+                event.id(),
+                event.eventType(),
+                event.aggregateId(),
+                event.occurredAt()
+        );
     }
 }
