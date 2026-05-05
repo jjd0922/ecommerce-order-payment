@@ -32,6 +32,7 @@ class InventoryReservationAdminControllerTest {
 
         mockMvc.perform(post("/admin/inventory-reservations/expire"))
                 .andExpect(status().isOk())
+                .andExpect(header().string("X-Request-Id", org.hamcrest.Matchers.notNullValue()))
                 .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.expiredCount").value(3))
                 .andExpect(jsonPath("$.processedAt").value("2026-05-05T10:00:00"));

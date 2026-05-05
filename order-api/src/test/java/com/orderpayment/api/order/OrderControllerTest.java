@@ -54,6 +54,7 @@ class OrderControllerTest {
                                 ))
                         ))))
                 .andExpect(status().isCreated())
+                .andExpect(header().string("X-Request-Id", org.hamcrest.Matchers.notNullValue()))
                 .andExpect(header().string("Location", "/orders/" + orderId))
                 .andExpect(jsonPath("$.orderId").value(orderId.toString()))
                 .andExpect(jsonPath("$.totalAmount").value(2000.00))
@@ -63,9 +64,12 @@ class OrderControllerTest {
     @Test
     void rejectsInvalidOrderRequest() throws Exception {
         mockMvc.perform(post("/orders")
+                        .header("X-Request-Id", "request-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("orderLines", List.of()))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+                .andExpect(header().string("X-Request-Id", "request-123"))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.requestId").value("request-123"));
     }
 }
