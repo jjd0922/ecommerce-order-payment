@@ -93,19 +93,19 @@ public class InventoryReservationPersistenceAdapter
 
     @Override
     @Transactional
-    public int releaseExpiredReservations(LocalDateTime now) {
-        int releasedCount = 0;
-        for (InventoryReservationJpaEntity reservation : inventoryReservationJpaRepository.findByStatusAndExpiresAtBefore(
+    public List<InventoryReservation> expireExpiredReservations(LocalDateTime now) {
+        List<InventoryReservation> expiredReservations = new java.util.ArrayList<>();
+        for (InventoryReservationJpaEntity reservation : inventoryReservationJpaRepository.findByStatusAndExpiresAtLessThanEqual(
                 InventoryReservationStatus.HELD,
                 now
         )) {
             int updatedRows = inventoryJpaRepository.release(reservation.productId(), reservation.quantity());
             if (updatedRows == 1) {
                 reservation.expire();
-                releasedCount++;
+                expiredReservations.add(toDomain(reservation));
             }
         }
-        return releasedCount;
+        return expiredReservations;
     }
 
     private static InventoryReservationJpaEntity toEntity(InventoryReservation reservation) {

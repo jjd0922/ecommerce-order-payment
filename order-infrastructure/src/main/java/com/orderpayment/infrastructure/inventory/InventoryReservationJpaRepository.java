@@ -12,7 +12,7 @@ public interface InventoryReservationJpaRepository extends JpaRepository<Invento
             InventoryReservationStatus status
     );
 
-    List<InventoryReservationJpaEntity> findByStatusAndExpiresAtBefore(
+    List<InventoryReservationJpaEntity> findByStatusAndExpiresAtLessThanEqual(
             InventoryReservationStatus status,
             LocalDateTime expiresAt
     );
