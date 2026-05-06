@@ -58,6 +58,7 @@ class PaymentControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
                 .andExpect(status().isCreated())
+                .andExpect(header().string("X-Request-Id", org.hamcrest.Matchers.notNullValue()))
                 .andExpect(header().string("Location", "/payments/" + paymentId))
                 .andExpect(jsonPath("$.paymentId").value(paymentId.toString()))
                 .andExpect(jsonPath("$.orderStatus").value("PAYMENT_PENDING"))
@@ -77,8 +78,10 @@ class PaymentControllerTest {
         ));
 
         mockMvc.perform(post("/payments/{paymentId}/confirm", paymentId)
+                        .header("X-Request-Id", "request-456")
                         .header("Idempotency-Key", "payment-request-1"))
                 .andExpect(status().isOk())
+                .andExpect(header().string("X-Request-Id", "request-456"))
                 .andExpect(jsonPath("$.paymentId").value(paymentId.toString()))
                 .andExpect(jsonPath("$.orderStatus").value("PAID"))
                 .andExpect(jsonPath("$.paymentStatus").value("APPROVED"));
