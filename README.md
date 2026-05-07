@@ -194,4 +194,4 @@ Windows 환경에서는 다음 명령을 사용한다.
 
 ## 상세 문서
 
-- [Notion 상세 문서 초안](docs/notion-project-document.md)
+- [Notion 상세 문서 초안](https://www.notion.so/357d2aef6d3180f78d8dd7f0ab8a1460)
