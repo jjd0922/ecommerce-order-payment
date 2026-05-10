@@ -1,6 +1,6 @@
 package com.orderpayment.application.payment;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
 import com.orderpayment.application.payment.dto.ExpireInventoryReservationsResult;
@@ -15,6 +15,7 @@ import com.orderpayment.domain.product.ProductId;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class ExpireInventoryReservationsServiceTest {
@@ -29,27 +30,29 @@ class ExpireInventoryReservationsServiceTest {
     );
 
     @Test
-    void expiresReservationsAndPublishesEvents() {
+    @DisplayName("expire 는 만료된 예약을 만료 처리하고 이벤트를 발행한다")
+    void expire_whenExpiredReservationsExist_thenExpireReservationsAndPublishEvents() {
         recoveryPort.expiredReservations = List.of(expiredReservation(now.minusMinutes(1)));
 
         ExpireInventoryReservationsResult result = service.expire();
 
-        assertEquals(1, result.expiredCount());
-        assertEquals(now, result.processedAt());
-        assertEquals(now, recoveryPort.requestedAt);
-        assertEquals(1, eventPublisher.events.size());
-        assertEquals("InventoryReservationExpired", eventPublisher.events.get(0).eventType());
+        assertThat(result.expiredCount()).isEqualTo(1);
+        assertThat(result.processedAt()).isEqualTo(now);
+        assertThat(recoveryPort.requestedAt).isEqualTo(now);
+        assertThat(eventPublisher.events).hasSize(1);
+        assertThat(eventPublisher.events.get(0).eventType()).isEqualTo("InventoryReservationExpired");
     }
 
     @Test
-    void returnsZeroWhenNoExpiredReservationExists() {
+    @DisplayName("expire 는 만료된 예약이 없으면 0건 결과를 반환한다")
+    void expire_whenExpiredReservationsDoNotExist_thenReturnZeroCount() {
         recoveryPort.expiredReservations = List.of();
 
         ExpireInventoryReservationsResult result = service.expire();
 
-        assertEquals(0, result.expiredCount());
-        assertEquals(now, result.processedAt());
-        assertEquals(0, eventPublisher.events.size());
+        assertThat(result.expiredCount()).isZero();
+        assertThat(result.processedAt()).isEqualTo(now);
+        assertThat(eventPublisher.events).isEmpty();
     }
 
     private static InventoryReservation expiredReservation(LocalDateTime expiresAt) {

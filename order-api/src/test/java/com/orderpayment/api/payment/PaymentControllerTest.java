@@ -1,7 +1,7 @@
 package com.orderpayment.api.payment;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -19,6 +19,7 @@ import com.orderpayment.domain.payment.PaymentId;
 import com.orderpayment.domain.payment.PaymentStatus;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -42,10 +43,11 @@ class PaymentControllerTest {
     private ConfirmPaymentUseCase confirmPaymentUseCase;
 
     @Test
-    void preparesPayment() throws Exception {
+    @DisplayName("POST /payments/prepare 는 결제를 준비하고 생성 결과를 반환한다")
+    void preparePayment_whenRequestValid_thenReturnCreatedPayment() throws Exception {
         UUID paymentId = UUID.fromString("00000000-0000-0000-0000-000000000601");
         UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
-        given(preparePaymentUseCase.prepare(any())).willReturn(new PreparePaymentResult(
+        when(preparePaymentUseCase.prepare(any())).thenReturn(new PreparePaymentResult(
                 new PaymentId(paymentId),
                 new OrderId(orderId),
                 Money.won(2000),
@@ -66,10 +68,11 @@ class PaymentControllerTest {
     }
 
     @Test
-    void confirmsPayment() throws Exception {
+    @DisplayName("POST /payments/{paymentId}/confirm 는 결제를 승인하고 결과를 반환한다")
+    void confirmPayment_whenRequestValid_thenReturnApprovedPayment() throws Exception {
         UUID paymentId = UUID.fromString("00000000-0000-0000-0000-000000000601");
         UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
-        given(confirmPaymentUseCase.confirm(any())).willReturn(new ConfirmPaymentResult(
+        when(confirmPaymentUseCase.confirm(any())).thenReturn(new ConfirmPaymentResult(
                 new PaymentId(paymentId),
                 new OrderId(orderId),
                 Money.won(2000),
@@ -88,7 +91,8 @@ class PaymentControllerTest {
     }
 
     @Test
-    void rejectsMissingIdempotencyKey() throws Exception {
+    @DisplayName("POST /payments/prepare 는 멱등키가 없으면 400 응답을 반환한다")
+    void preparePayment_whenIdempotencyKeyMissing_thenReturnBadRequest() throws Exception {
         UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
 
         mockMvc.perform(post("/payments/prepare")

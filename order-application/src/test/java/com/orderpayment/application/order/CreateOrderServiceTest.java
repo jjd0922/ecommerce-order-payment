@@ -1,7 +1,7 @@
 package com.orderpayment.application.order;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.orderpayment.application.order.dto.CreateOrderCommand;
 import com.orderpayment.application.order.dto.CreateOrderResult;
@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class CreateOrderServiceTest {
@@ -35,7 +36,8 @@ class CreateOrderServiceTest {
     );
 
     @Test
-    void createsOrderWithoutInventoryReservation() {
+    @DisplayName("create 는 상품을 조회해 주문을 저장하고 결과를 반환한다")
+    void create_whenProductsSelling_thenSaveOrderAndReturnResult() {
         productPort.save(Product.selling(keyboardId, "keyboard", Money.won(1000)));
         productPort.save(Product.selling(mouseId, "mouse", Money.won(500)));
 
@@ -44,14 +46,15 @@ class CreateOrderServiceTest {
                 new CreateOrderCommand.OrderLine(mouseId, 1)
         )));
 
-        assertEquals(fixedOrderId, result.orderId());
-        assertEquals(Money.won(2500), result.totalAmount());
-        assertEquals(OrderStatus.CREATED, result.status());
-        assertEquals(Money.won(2500), orderRepository.savedOrder.totalAmount());
+        assertThat(result.orderId()).isEqualTo(fixedOrderId);
+        assertThat(result.totalAmount()).isEqualTo(Money.won(2500));
+        assertThat(result.status()).isEqualTo(OrderStatus.CREATED);
+        assertThat(orderRepository.savedOrder.totalAmount()).isEqualTo(Money.won(2500));
     }
 
     @Test
-    void rejectsStoppedProduct() {
+    @DisplayName("create 는 판매 중지 상품이면 예외를 던진다")
+    void create_whenProductStopped_thenThrowException() {
         Product product = Product.selling(keyboardId, "keyboard", Money.won(1000));
         product.stopSelling();
         productPort.save(product);
@@ -60,7 +63,8 @@ class CreateOrderServiceTest {
                 new CreateOrderCommand.OrderLine(keyboardId, 1)
         ));
 
-        assertThrows(DomainException.class, () -> service.create(command));
+        assertThatThrownBy(() -> service.create(command))
+                .isInstanceOf(DomainException.class);
     }
 
     private static class FakeProductPort implements ProductQueryPort {

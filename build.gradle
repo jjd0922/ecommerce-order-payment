@@ -30,6 +30,7 @@ subprojects {
 
     dependencies {
         testImplementation 'org.junit.jupiter:junit-jupiter'
+        testImplementation 'org.assertj:assertj-core'
         testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     }
 
@@ -41,5 +42,9 @@ subprojects {
 
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
     }
 }

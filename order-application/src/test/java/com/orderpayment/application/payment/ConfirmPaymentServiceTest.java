@@ -1,7 +1,7 @@
 package com.orderpayment.application.payment;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
@@ -39,6 +39,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class ConfirmPaymentServiceTest {
@@ -66,58 +67,62 @@ class ConfirmPaymentServiceTest {
     );
 
     @Test
-    void approvesPaymentAndConfirmsInventoryReservation() {
+    @DisplayName("confirm 은 결제를 승인하고 재고 예약을 확정한다")
+    void confirm_whenApprovalSucceeds_thenApprovePaymentAndConfirmReservation() {
         givenPreparedPayment();
         inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
 
         ConfirmPaymentResult result = service.confirm(command());
 
-        assertEquals(paymentId, result.paymentId());
-        assertEquals(OrderStatus.PAID, result.orderStatus());
-        assertEquals(PaymentStatus.APPROVED, result.paymentStatus());
-        assertEquals(0, inventoryReservationPort.inventory(productId).heldQuantity());
-        assertEquals(InventoryReservationStatus.CONFIRMED, inventoryReservationPort.firstReservation().status());
-        assertEquals(2, eventPublisher.events.size());
+        assertThat(result.paymentId()).isEqualTo(paymentId);
+        assertThat(result.orderStatus()).isEqualTo(OrderStatus.PAID);
+        assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(inventoryReservationPort.inventory(productId).heldQuantity()).isZero();
+        assertThat(inventoryReservationPort.firstReservation().status())
+                .isEqualTo(InventoryReservationStatus.CONFIRMED);
+        assertThat(eventPublisher.events).hasSize(2);
     }
 
     @Test
-    void returnsExistingResultWhenAlreadyApproved() {
+    @DisplayName("confirm 은 이미 승인된 결제이면 기존 결과를 반환한다")
+    void confirm_whenPaymentAlreadyApproved_thenReturnExistingResult() {
         givenPreparedPayment();
         inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
 
         ConfirmPaymentResult firstResult = service.confirm(command());
         ConfirmPaymentResult secondResult = service.confirm(command());
 
-        assertEquals(firstResult, secondResult);
-        assertEquals(1, paymentApprovalPort.approveCount());
-        assertEquals(1, paymentPort.saveCount());
-        assertEquals(2, eventPublisher.events.size());
+        assertThat(secondResult).isEqualTo(firstResult);
+        assertThat(paymentApprovalPort.approveCount()).isEqualTo(1);
+        assertThat(paymentPort.saveCount()).isEqualTo(1);
+        assertThat(eventPublisher.events).hasSize(2);
     }
 
     @Test
-    void failsPaymentAndReleasesInventoryReservationWhenMockApprovalFails() {
+    @DisplayName("confirm 은 결제 승인 실패 시 결제를 실패 처리하고 재고 예약을 해제한다")
+    void confirm_whenApprovalFails_thenFailPaymentAndReleaseReservation() {
         givenPreparedPayment();
         inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
         paymentApprovalPort.failNext("mock approval failed");
 
         ConfirmPaymentResult result = service.confirm(command());
 
-        assertEquals(OrderStatus.FAILED, result.orderStatus());
-        assertEquals(PaymentStatus.FAILED, result.paymentStatus());
-        assertEquals(5, inventoryReservationPort.inventory(productId).availableQuantity());
-        assertEquals(0, inventoryReservationPort.inventory(productId).heldQuantity());
-        assertEquals(InventoryReservationStatus.RELEASED, inventoryReservationPort.firstReservation().status());
-        assertEquals(2, eventPublisher.events.size());
+        assertThat(result.orderStatus()).isEqualTo(OrderStatus.FAILED);
+        assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(inventoryReservationPort.inventory(productId).availableQuantity()).isEqualTo(5);
+        assertThat(inventoryReservationPort.inventory(productId).heldQuantity()).isZero();
+        assertThat(inventoryReservationPort.firstReservation().status())
+                .isEqualTo(InventoryReservationStatus.RELEASED);
+        assertThat(eventPublisher.events).hasSize(2);
     }
 
     @Test
-    void rejectsDifferentIdempotencyKey() {
+    @DisplayName("confirm 은 다른 멱등키로 요청하면 예외를 던진다")
+    void confirm_whenDifferentIdempotencyKey_thenThrowException() {
         givenPreparedPayment();
 
-        assertThrows(IdempotencyKeyConflictException.class, () -> service.confirm(new ConfirmPaymentCommand(
-                paymentId,
-                new IdempotencyKey("another-key")
-        )));
+        assertThatThrownBy(() -> service.confirm(new ConfirmPaymentCommand(paymentId, new IdempotencyKey("another-key"))))
+                .isInstanceOf(IdempotencyKeyConflictException.class);
     }
 
     private void givenPreparedPayment() {

@@ -1,46 +1,53 @@
 package com.orderpayment.domain.payment;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.order.OrderId;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class PaymentTest {
 
     @Test
-    void createsReadyPayment() {
+    @DisplayName("ready 는 READY 상태의 결제를 생성한다")
+    void ready_whenCalled_thenCreateReadyPayment() {
         Payment payment = payment();
 
-        assertEquals(PaymentStatus.READY, payment.status());
-        assertEquals(Money.won(1000), payment.amount());
+        assertThat(payment.status()).isEqualTo(PaymentStatus.READY);
+        assertThat(payment.amount()).isEqualTo(Money.won(1000));
     }
 
     @Test
-    void approvesPayment() {
+    @DisplayName("approve 는 결제 상태를 APPROVED 로 변경한다")
+    void approve_whenReady_thenChangeStatusToApproved() {
         Payment payment = payment();
 
         payment.approve();
 
-        assertEquals(PaymentStatus.APPROVED, payment.status());
+        assertThat(payment.status()).isEqualTo(PaymentStatus.APPROVED);
     }
 
     @Test
-    void rejectsApprovedPaymentCancellation() {
+    @DisplayName("cancel 은 승인된 결제이면 예외를 던진다")
+    void cancel_whenPaymentApproved_thenThrowException() {
         Payment payment = payment();
         payment.approve();
 
-        assertThrows(DomainException.class, payment::cancel);
+        assertThatThrownBy(payment::cancel)
+                .isInstanceOf(DomainException.class);
     }
 
     @Test
-    void rejectsDuplicatedTerminalTransition() {
+    @DisplayName("approve 는 이미 실패한 결제이면 예외를 던진다")
+    void approve_whenPaymentAlreadyFailed_thenThrowException() {
         Payment payment = payment();
         payment.fail();
 
-        assertThrows(DomainException.class, payment::approve);
+        assertThatThrownBy(payment::approve)
+                .isInstanceOf(DomainException.class);
     }
 
     private static Payment payment() {

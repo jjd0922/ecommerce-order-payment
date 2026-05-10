@@ -1,23 +1,21 @@
 package com.orderpayment.application.payment;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.orderpayment.application.payment.dto.PreparePaymentCommand;
 import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.payment.IdempotencyKey;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class PreparePaymentCommandTest {
 
     @Test
-    void rejectsNullValue() {
-        assertThrows(NullPointerException.class, () -> new PreparePaymentCommand(
-                null,
-                new IdempotencyKey("payment-request-1")
-        ));
-        assertThrows(NullPointerException.class, () -> new PreparePaymentCommand(
-                OrderId.newId(),
-                null
-        ));
+    @DisplayName("PreparePaymentCommand 는 필수 값이 null 이면 예외를 던진다")
+    void constructor_whenRequiredValueNull_thenThrowException() {
+        assertThatThrownBy(() -> new PreparePaymentCommand(null, new IdempotencyKey("payment-request-1")))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new PreparePaymentCommand(OrderId.newId(), null))
+                .isInstanceOf(NullPointerException.class);
     }
 }

@@ -1,7 +1,7 @@
 package com.orderpayment.application.payment;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.orderpayment.application.common.port.out.CurrentTimePort;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
@@ -35,6 +35,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class PreparePaymentServiceTest {
@@ -59,39 +60,42 @@ class PreparePaymentServiceTest {
     );
 
     @Test
-    void preparesPaymentAndHoldsInventory() {
+    @DisplayName("prepare 는 결제를 준비하고 재고를 보류한다")
+    void prepare_whenOrderExistsAndInventoryAvailable_thenPreparePaymentAndHoldInventory() {
         orderPort.saveOrder(order());
         inventoryReservationPort.save(Inventory.of(productId, 5));
 
         PreparePaymentResult result = service.prepare(command(orderId, "payment-request-1"));
 
-        assertEquals(paymentId, result.paymentId());
-        assertEquals(orderId, result.orderId());
-        assertEquals(Money.won(2000), result.amount());
-        assertEquals(OrderStatus.PAYMENT_PENDING, result.orderStatus());
-        assertEquals(PaymentStatus.READY, result.paymentStatus());
-        assertEquals(3, inventoryReservationPort.inventory(productId).availableQuantity());
-        assertEquals(2, inventoryReservationPort.inventory(productId).heldQuantity());
-        assertEquals(1, inventoryReservationPort.reservations.size());
-        assertEquals(2, eventPublisher.events.size());
+        assertThat(result.paymentId()).isEqualTo(paymentId);
+        assertThat(result.orderId()).isEqualTo(orderId);
+        assertThat(result.amount()).isEqualTo(Money.won(2000));
+        assertThat(result.orderStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.READY);
+        assertThat(inventoryReservationPort.inventory(productId).availableQuantity()).isEqualTo(3);
+        assertThat(inventoryReservationPort.inventory(productId).heldQuantity()).isEqualTo(2);
+        assertThat(inventoryReservationPort.reservations).hasSize(1);
+        assertThat(eventPublisher.events).hasSize(2);
     }
 
     @Test
-    void returnsExistingPaymentWhenSameIdempotencyKeyIsRequestedAgain() {
+    @DisplayName("prepare 는 같은 멱등키 요청이면 기존 결제 결과를 반환한다")
+    void prepare_whenSameIdempotencyKeyRequestedAgain_thenReturnExistingPaymentResult() {
         orderPort.saveOrder(order());
         inventoryReservationPort.save(Inventory.of(productId, 5));
 
         PreparePaymentResult firstResult = service.prepare(command(orderId, "payment-request-1"));
         PreparePaymentResult secondResult = service.prepare(command(orderId, "payment-request-1"));
 
-        assertEquals(firstResult, secondResult);
-        assertEquals(1, paymentPort.saveCount());
-        assertEquals(1, inventoryReservationPort.reservations.size());
-        assertEquals(2, eventPublisher.events.size());
+        assertThat(secondResult).isEqualTo(firstResult);
+        assertThat(paymentPort.saveCount()).isEqualTo(1);
+        assertThat(inventoryReservationPort.reservations).hasSize(1);
+        assertThat(eventPublisher.events).hasSize(2);
     }
 
     @Test
-    void rejectsSameIdempotencyKeyWithDifferentOrder() {
+    @DisplayName("prepare 는 같은 멱등키로 다른 주문을 요청하면 예외를 던진다")
+    void prepare_whenSameIdempotencyKeyUsedForDifferentOrder_thenThrowException() {
         orderPort.saveOrder(order());
         inventoryReservationPort.save(Inventory.of(productId, 5));
         service.prepare(command(orderId, "payment-request-1"));
@@ -101,17 +105,18 @@ class PreparePaymentServiceTest {
                 OrderItem.of(productId, "keyboard", Money.won(1000), 1)
         )));
 
-        assertThrows(IdempotencyKeyConflictException.class, () -> service.prepare(
-                command(anotherOrderId, "payment-request-1")
-        ));
+        assertThatThrownBy(() -> service.prepare(command(anotherOrderId, "payment-request-1")))
+                .isInstanceOf(IdempotencyKeyConflictException.class);
     }
 
     @Test
-    void rejectsInsufficientInventory() {
+    @DisplayName("prepare 는 재고가 부족하면 예외를 던진다")
+    void prepare_whenInventoryInsufficient_thenThrowException() {
         orderPort.saveOrder(order());
         inventoryReservationPort.save(Inventory.of(productId, 1));
 
-        assertThrows(DomainException.class, () -> service.prepare(command(orderId, "payment-request-1")));
+        assertThatThrownBy(() -> service.prepare(command(orderId, "payment-request-1")))
+                .isInstanceOf(DomainException.class);
     }
 
     private Order order() {

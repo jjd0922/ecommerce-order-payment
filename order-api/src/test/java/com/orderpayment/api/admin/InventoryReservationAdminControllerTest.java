@@ -1,6 +1,6 @@
 package com.orderpayment.api.admin;
 
-import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.orderpayment.application.payment.dto.ExpireInventoryReservationsResult;
 import com.orderpayment.application.payment.port.in.ExpireInventoryReservationsUseCase;
 import java.time.LocalDateTime;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -25,10 +26,11 @@ class InventoryReservationAdminControllerTest {
     private ExpireInventoryReservationsUseCase expireInventoryReservationsUseCase;
 
     @Test
-    void expiresInventoryReservations() throws Exception {
+    @DisplayName("POST /admin/inventory-reservations/expire 는 만료 처리 결과를 반환한다")
+    void expireInventoryReservations_whenRequested_thenReturnExpiredResult() throws Exception {
         LocalDateTime processedAt = LocalDateTime.of(2026, 5, 5, 10, 0);
-        given(expireInventoryReservationsUseCase.expire())
-                .willReturn(new ExpireInventoryReservationsResult(3, processedAt));
+        when(expireInventoryReservationsUseCase.expire())
+                .thenReturn(new ExpireInventoryReservationsResult(3, processedAt));
 
         mockMvc.perform(post("/admin/inventory-reservations/expire"))
                 .andExpect(status().isOk())
