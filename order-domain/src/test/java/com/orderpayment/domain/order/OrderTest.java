@@ -1,56 +1,65 @@
 package com.orderpayment.domain.order;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.product.ProductId;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class OrderTest {
 
     @Test
-    void createsOrderAndCalculatesTotalAmount() {
+    @DisplayName("create 는 주문을 생성하고 총 주문 금액을 계산한다")
+    void create_whenItemsGiven_thenCreateOrderAndCalculateTotalAmount() {
         Order order = Order.create(OrderId.newId(), List.of(
                 OrderItem.of(ProductId.newId(), "keyboard", Money.won(1000), 2),
                 OrderItem.of(ProductId.newId(), "mouse", Money.won(500), 1)
         ));
 
-        assertEquals(OrderStatus.CREATED, order.status());
-        assertEquals(Money.won(2500), order.totalAmount());
+        assertThat(order.status()).isEqualTo(OrderStatus.CREATED);
+        assertThat(order.totalAmount()).isEqualTo(Money.won(2500));
     }
 
     @Test
-    void changesStatusFromCreatedToPaid() {
+    @DisplayName("markPaid 는 결제 요청된 주문을 PAID 상태로 변경한다")
+    void markPaid_whenPaymentRequested_thenChangeStatusToPaid() {
         Order order = order();
 
         order.requestPayment();
         order.markPaid();
 
-        assertEquals(OrderStatus.PAID, order.status());
+        assertThat(order.status()).isEqualTo(OrderStatus.PAID);
     }
 
     @Test
-    void rejectsInvalidStatusTransition() {
+    @DisplayName("markPaid 는 결제 요청 전이면 예외를 던진다")
+    void markPaid_whenPaymentNotRequested_thenThrowException() {
         Order order = order();
 
-        assertThrows(DomainException.class, order::markPaid);
+        assertThatThrownBy(order::markPaid)
+                .isInstanceOf(DomainException.class);
     }
 
     @Test
-    void rejectsPaidOrderCancellation() {
+    @DisplayName("cancel 은 결제 완료 주문이면 예외를 던진다")
+    void cancel_whenOrderPaid_thenThrowException() {
         Order order = order();
         order.requestPayment();
         order.markPaid();
 
-        assertThrows(DomainException.class, order::cancel);
+        assertThatThrownBy(order::cancel)
+                .isInstanceOf(DomainException.class);
     }
 
     @Test
-    void rejectsEmptyItems() {
-        assertThrows(DomainException.class, () -> Order.create(OrderId.newId(), List.of()));
+    @DisplayName("create 는 주문 항목이 비어 있으면 예외를 던진다")
+    void create_whenItemsEmpty_thenThrowException() {
+        assertThatThrownBy(() -> Order.create(OrderId.newId(), List.of()))
+                .isInstanceOf(DomainException.class);
     }
 
     private static Order order() {
