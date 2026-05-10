@@ -1,6 +1,6 @@
 package com.orderpayment.infrastructure.inventory;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.math.BigDecimal;
@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class InventoryReservationConcurrencyIntegrationTest {
@@ -55,7 +56,8 @@ class InventoryReservationConcurrencyIntegrationTest {
     }
 
     @Test
-    void conditionalUpdatePreventsOversellingUnderConcurrentReservationRequests() throws Exception {
+    @DisplayName("조건부 재고 업데이트는 동시 예약 요청에서 초과 판매를 방지한다")
+    void holdInventory_whenConcurrentReservationRequests_thenPreventOverselling() throws Exception {
         ExecutorService executorService = Executors.newFixedThreadPool(ATTEMPT_COUNT);
         CountDownLatch readyLatch = new CountDownLatch(ATTEMPT_COUNT);
         CountDownLatch startLatch = new CountDownLatch(1);
@@ -77,9 +79,9 @@ class InventoryReservationConcurrencyIntegrationTest {
         assumeTrue(executorService.awaitTermination(10, TimeUnit.SECONDS), "concurrent workers did not finish");
 
         InventorySnapshot inventory = getInventory(productId);
-        assertEquals(INITIAL_STOCK, successCount.get());
-        assertEquals(0, inventory.availableQuantity());
-        assertEquals(INITIAL_STOCK, inventory.heldQuantity());
+        assertThat(successCount.get()).isEqualTo(INITIAL_STOCK);
+        assertThat(inventory.availableQuantity()).isZero();
+        assertThat(inventory.heldQuantity()).isEqualTo(INITIAL_STOCK);
     }
 
     private static boolean canConnectToDatabase() {
