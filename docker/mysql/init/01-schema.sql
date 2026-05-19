@@ -72,11 +72,21 @@ CREATE TABLE IF NOT EXISTS payment (
     idempotency_key VARCHAR(100) NOT NULL,
     status VARCHAR(30) NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_payment_idempotency_key (idempotency_key),
     INDEX idx_payment_order_id (order_id),
     CONSTRAINT fk_payment_order
         FOREIGN KEY (order_id)
         REFERENCES orders (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS idempotency_record (
+    idempotency_key VARCHAR(100) NOT NULL,
+    request_hash VARCHAR(128) NOT NULL,
+    response_body JSON NULL,
+    status VARCHAR(20) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (idempotency_key),
+    INDEX idx_idempotency_record_status_expires_at (status, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS outbox_event (
