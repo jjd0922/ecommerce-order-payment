@@ -71,8 +71,11 @@ class OrderControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("orderLines", List.of()))))
                 .andExpect(status().isBadRequest())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
                 .andExpect(header().string("X-Request-Id", "request-123"))
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.title").value("invalid request"))
+                .andExpect(jsonPath("$.detail").value("invalid request"))
                 .andExpect(jsonPath("$.requestId").value("request-123"));
     }
 }

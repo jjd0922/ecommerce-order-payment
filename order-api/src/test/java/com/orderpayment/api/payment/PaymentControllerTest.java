@@ -8,10 +8,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.orderpayment.application.idempotency.IdempotencyInFlightException;
+import com.orderpayment.application.payment.IdempotencyKeyConflictException;
 import com.orderpayment.application.payment.dto.ConfirmPaymentResult;
 import com.orderpayment.application.payment.dto.PreparePaymentResult;
 import com.orderpayment.application.payment.port.in.ConfirmPaymentUseCase;
 import com.orderpayment.application.payment.port.in.PreparePaymentUseCase;
+import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.order.OrderStatus;
@@ -98,6 +101,57 @@ class PaymentControllerTest {
         mockMvc.perform(post("/payments/prepare")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.title").value("invalid request"));
+    }
+
+    @Test
+    @DisplayName("POST /payments/prepare returns 409 when idempotency key conflicts")
+    void preparePayment_whenIdempotencyKeyConflicts_thenReturnConflict() throws Exception {
+        UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
+        when(preparePaymentUseCase.prepare(any()))
+                .thenThrow(new IdempotencyKeyConflictException("idempotency key was already used"));
+
+        mockMvc.perform(post("/payments/prepare")
+                        .header("X-Request-Id", "request-789")
+                        .header("Idempotency-Key", "payment-request-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"))
+                .andExpect(jsonPath("$.requestId").value("request-789"));
+    }
+
+    @Test
+    @DisplayName("POST /payments/prepare returns 409 when idempotency request is in flight")
+    void preparePayment_whenIdempotencyRequestIsInFlight_thenReturnConflict() throws Exception {
+        UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
+        when(preparePaymentUseCase.prepare(any()))
+                .thenThrow(new IdempotencyInFlightException("idempotency request is in flight"));
+
+        mockMvc.perform(post("/payments/prepare")
+                        .header("Idempotency-Key", "payment-request-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_IN_FLIGHT"));
+    }
+
+    @Test
+    @DisplayName("POST /payments/prepare returns 422 when inventory is insufficient")
+    void preparePayment_whenInventoryInsufficient_thenReturnUnprocessableEntity() throws Exception {
+        UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
+        when(preparePaymentUseCase.prepare(any()))
+                .thenThrow(new DomainException("inventory is insufficient"));
+
+        mockMvc.perform(post("/payments/prepare")
+                        .header("Idempotency-Key", "payment-request-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("UNPROCESSABLE_ENTITY"));
     }
 }
