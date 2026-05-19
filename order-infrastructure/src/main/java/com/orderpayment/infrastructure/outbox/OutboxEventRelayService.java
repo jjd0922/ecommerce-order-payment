@@ -10,14 +10,17 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class OutboxEventRelayService {
 
+    private static final int DEFAULT_BATCH_SIZE = 100;
+
     private final OutboxEventJpaRepository outboxEventJpaRepository;
     private final LoggingDomainEventPublisherAdapter loggingDomainEventPublisherAdapter;
 
     @Transactional
     public int publishPendingEvents() {
         int publishedCount = 0;
-        for (OutboxEventJpaEntity event : outboxEventJpaRepository.findTop100ByStatusOrderByOccurredAtAscIdAsc(
-                OutboxEventStatus.PENDING
+        for (OutboxEventJpaEntity event : outboxEventJpaRepository.findPendingForUpdateSkipLocked(
+                OutboxEventStatus.PENDING.name(),
+                DEFAULT_BATCH_SIZE
         )) {
             try {
                 loggingDomainEventPublisherAdapter.publish(event);
