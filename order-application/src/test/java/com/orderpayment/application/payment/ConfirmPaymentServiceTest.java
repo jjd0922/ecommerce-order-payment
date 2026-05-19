@@ -37,8 +37,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -100,6 +104,44 @@ class ConfirmPaymentServiceTest {
     }
 
     @Test
+    @DisplayName("confirm calls payment approval only once for duplicate concurrent requests")
+    void confirm_whenDuplicateConcurrentRequests_thenApproveOnlyOnce() throws Exception {
+        givenPreparedPayment();
+        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
+        int requestCount = 2;
+        ExecutorService executorService = Executors.newFixedThreadPool(requestCount);
+        CountDownLatch readyLatch = new CountDownLatch(requestCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch approvalStartedLatch = new CountDownLatch(1);
+        CountDownLatch releaseApprovalLatch = new CountDownLatch(1);
+        paymentApprovalPort.blockApproval(approvalStartedLatch, releaseApprovalLatch);
+
+        for (int i = 0; i < requestCount; i++) {
+            executorService.submit(() -> {
+                readyLatch.countDown();
+                await(startLatch);
+                service.confirm(command());
+            });
+        }
+
+        assertThat(readyLatch.await(5, TimeUnit.SECONDS)).isTrue();
+        startLatch.countDown();
+        assertThat(approvalStartedLatch.await(5, TimeUnit.SECONDS)).isTrue();
+        awaitUntilPaymentProcessing();
+        releaseApprovalLatch.countDown();
+        executorService.shutdown();
+        assertThat(executorService.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(paymentApprovalPort.approveCount()).isEqualTo(1);
+        assertThat(paymentPort.saveCount()).isEqualTo(2);
+        assertThat(paymentPort.getPayment(paymentId).status()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(orderPort.getOrder(orderId).status()).isEqualTo(OrderStatus.PAID);
+        assertThat(inventoryReservationPort.firstReservation().status())
+                .isEqualTo(InventoryReservationStatus.CONFIRMED);
+        assertThat(eventPublisher.events).hasSize(2);
+    }
+
+    @Test
     @DisplayName("confirm 은 결제 승인 실패 시 결제를 실패 처리하고 재고 예약을 해제한다")
     void confirm_whenApprovalFails_thenFailPaymentAndReleaseReservation() {
         givenPreparedPayment();
@@ -150,6 +192,26 @@ class ConfirmPaymentServiceTest {
         return new ConfirmPaymentCommand(paymentId, idempotencyKey);
     }
 
+    private void awaitUntilPaymentProcessing() {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (paymentPort.getPayment(paymentId).status() == PaymentStatus.PROCESSING) {
+                return;
+            }
+            Thread.yield();
+        }
+        throw new AssertionError("payment did not enter PROCESSING status");
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
+        }
+    }
+
     private static class FakeOrderPort implements OrderQueryPort, OrderCommandPort {
 
         private final Map<OrderId, Order> orders = new ConcurrentHashMap<>();
@@ -174,6 +236,7 @@ class ConfirmPaymentServiceTest {
         private final Map<PaymentId, Payment> paymentsById = new ConcurrentHashMap<>();
         private final Map<IdempotencyKey, Payment> paymentsByKey = new ConcurrentHashMap<>();
         private final AtomicInteger saveCount = new AtomicInteger();
+        private final AtomicInteger forUpdateReadCount = new AtomicInteger();
 
         @Override
         public Payment getPayment(PaymentId paymentId) {
@@ -186,6 +249,10 @@ class ConfirmPaymentServiceTest {
 
         @Override
         public Payment getPaymentForUpdate(PaymentId paymentId) {
+            int readCount = forUpdateReadCount.incrementAndGet();
+            if (readCount > 1) {
+                awaitUntilPaymentStatusChangesFromReady(paymentId);
+            }
             return getPayment(paymentId);
         }
 
@@ -207,6 +274,17 @@ class ConfirmPaymentServiceTest {
 
         int saveCount() {
             return saveCount.get();
+        }
+
+        private void awaitUntilPaymentStatusChangesFromReady(PaymentId paymentId) {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (System.nanoTime() < deadline) {
+                if (getPayment(paymentId).status() != PaymentStatus.READY) {
+                    return;
+                }
+                Thread.yield();
+            }
+            throw new AssertionError("payment row lock was not released");
         }
     }
 
@@ -276,10 +354,16 @@ class ConfirmPaymentServiceTest {
 
         private final AtomicInteger approveCount = new AtomicInteger();
         private String failureReason;
+        private CountDownLatch approvalStartedLatch;
+        private CountDownLatch releaseApprovalLatch;
 
         @Override
         public PaymentApprovalResult approve(Payment payment) {
             approveCount.incrementAndGet();
+            if (approvalStartedLatch != null && releaseApprovalLatch != null) {
+                approvalStartedLatch.countDown();
+                await(releaseApprovalLatch);
+            }
             if (failureReason != null) {
                 return PaymentApprovalResult.failed(failureReason);
             }
@@ -288,6 +372,11 @@ class ConfirmPaymentServiceTest {
 
         void failNext(String failureReason) {
             this.failureReason = failureReason;
+        }
+
+        void blockApproval(CountDownLatch approvalStartedLatch, CountDownLatch releaseApprovalLatch) {
+            this.approvalStartedLatch = approvalStartedLatch;
+            this.releaseApprovalLatch = releaseApprovalLatch;
         }
 
         int approveCount() {
