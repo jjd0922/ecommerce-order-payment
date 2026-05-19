@@ -3,8 +3,11 @@ package com.orderpayment.application.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.CurrentTimePort;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordCommandPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordQueryPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
 import com.orderpayment.application.payment.dto.PreparePaymentCommand;
@@ -13,9 +16,11 @@ import com.orderpayment.application.payment.port.out.InventoryReservationCommand
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.PreparePaymentService;
+import com.orderpayment.application.payment.service.PreparePaymentTransactionService;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.event.DomainEvent;
 import com.orderpayment.domain.common.Money;
+import com.orderpayment.domain.idempotency.IdempotencyRecord;
 import com.orderpayment.domain.inventory.Inventory;
 import com.orderpayment.domain.inventory.InventoryReservation;
 import com.orderpayment.domain.inventory.InventoryReservationId;
@@ -47,17 +52,21 @@ class PreparePaymentServiceTest {
     private final FakeOrderPort orderPort = new FakeOrderPort();
     private final FakeInventoryReservationPort inventoryReservationPort = new FakeInventoryReservationPort();
     private final FakePaymentPort paymentPort = new FakePaymentPort();
+    private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
-    private final PreparePaymentService service = new PreparePaymentService(
+    private final PreparePaymentTransactionService transactionService = new PreparePaymentTransactionService(
             orderPort,
             orderPort,
             inventoryReservationPort,
             paymentPort,
-            paymentPort,
             () -> paymentId,
             () -> now,
-            eventPublisher
+            eventPublisher,
+            idempotencyRecordPort,
+            idempotencyRecordPort,
+            new ObjectMapper()
     );
+    private final PreparePaymentService service = new PreparePaymentService(transactionService);
 
     @Test
     @DisplayName("prepare 는 결제를 준비하고 재고를 보류한다")
@@ -225,6 +234,22 @@ class PreparePaymentServiceTest {
 
         int saveCount() {
             return saveCount.get();
+        }
+    }
+
+    private static class FakeIdempotencyRecordPort
+            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
+
+        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
+
+        @Override
+        public Optional<IdempotencyRecord> findByKey(String key) {
+            return Optional.ofNullable(records.get(key));
+        }
+
+        @Override
+        public void save(IdempotencyRecord record) {
+            records.put(record.key(), record);
         }
     }
 
