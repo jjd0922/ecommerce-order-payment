@@ -6,5 +6,5 @@ import java.util.List;
 
 public interface InventoryReservationRecoveryPort {
 
-    List<InventoryReservation> expireExpiredReservations(LocalDateTime now);
+    List<InventoryReservation> expireExpiredReservations(LocalDateTime now, int batchSize);
 }

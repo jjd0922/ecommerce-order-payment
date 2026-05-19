@@ -4,6 +4,8 @@ import com.orderpayment.domain.inventory.InventoryReservationStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface InventoryReservationJpaRepository extends JpaRepository<InventoryReservationJpaEntity, String> {
 
@@ -12,8 +14,21 @@ public interface InventoryReservationJpaRepository extends JpaRepository<Invento
             InventoryReservationStatus status
     );
 
-    List<InventoryReservationJpaEntity> findByStatusAndExpiresAtLessThanEqual(
-            InventoryReservationStatus status,
-            LocalDateTime expiresAt
+    @Query(
+            value = """
+                    SELECT *
+                    FROM inventory_reservation
+                    WHERE status = :status
+                      AND expires_at <= :expiresAt
+                    ORDER BY expires_at ASC, id ASC
+                    LIMIT :limit
+                    FOR UPDATE SKIP LOCKED
+                    """,
+            nativeQuery = true
+    )
+    List<InventoryReservationJpaEntity> findExpiredForUpdateSkipLocked(
+            @Param("status") String status,
+            @Param("expiresAt") LocalDateTime expiresAt,
+            @Param("limit") int limit
     );
 }

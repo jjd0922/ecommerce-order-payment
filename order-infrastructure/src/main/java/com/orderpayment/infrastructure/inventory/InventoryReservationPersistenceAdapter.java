@@ -94,11 +94,12 @@ public class InventoryReservationPersistenceAdapter
 
     @Override
     @Transactional
-    public List<InventoryReservation> expireExpiredReservations(LocalDateTime now) {
+    public List<InventoryReservation> expireExpiredReservations(LocalDateTime now, int batchSize) {
         List<InventoryReservation> expiredReservations = new java.util.ArrayList<>();
-        for (InventoryReservationJpaEntity reservation : inventoryReservationJpaRepository.findByStatusAndExpiresAtLessThanEqual(
-                InventoryReservationStatus.HELD,
-                now
+        for (InventoryReservationJpaEntity reservation : inventoryReservationJpaRepository.findExpiredForUpdateSkipLocked(
+                InventoryReservationStatus.HELD.name(),
+                now,
+                batchSize
         )) {
             int updatedRows = inventoryJpaRepository.release(reservation.productId(), reservation.quantity());
             if (updatedRows == 1) {
