@@ -45,6 +45,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -164,6 +165,24 @@ class PreparePaymentServiceTest {
     }
 
     @Test
+    @DisplayName("prepare holds inventory in product id order")
+    void prepare_whenOrderHasMultipleProducts_thenHoldInventoryInProductIdOrder() {
+        ProductId laterProductId = new ProductId(UUID.fromString("00000000-0000-0000-0000-000000000002"));
+        ProductId earlierProductId = new ProductId(UUID.fromString("00000000-0000-0000-0000-000000000001"));
+        orderPort.saveOrder(Order.create(orderId, List.of(
+                OrderItem.of(laterProductId, "mouse", Money.won(1000), 1),
+                OrderItem.of(earlierProductId, "keyboard", Money.won(2000), 1)
+        )));
+        inventoryReservationPort.save(Inventory.of(laterProductId, 5));
+        inventoryReservationPort.save(Inventory.of(earlierProductId, 5));
+
+        service.prepare(command(orderId, "payment-request-1"));
+
+        assertThat(inventoryReservationPort.heldProductIds)
+                .containsExactly(earlierProductId, laterProductId);
+    }
+
+    @Test
     @DisplayName("prepare 는 재고가 부족하면 예외를 던진다")
     void prepare_whenInventoryInsufficient_thenThrowException() {
         orderPort.saveOrder(order());
@@ -229,6 +248,7 @@ class PreparePaymentServiceTest {
 
         private final Map<ProductId, Inventory> inventories = new ConcurrentHashMap<>();
         private final Map<InventoryReservationId, InventoryReservation> reservations = new ConcurrentHashMap<>();
+        private final List<ProductId> heldProductIds = new CopyOnWriteArrayList<>();
 
         @Override
         public InventoryReservation hold(OrderId orderId, ProductId productId, int quantity, LocalDateTime expiresAt) {
@@ -237,6 +257,7 @@ class PreparePaymentServiceTest {
                 throw new DomainException("inventory not found");
             }
             inventory.hold(quantity);
+            heldProductIds.add(productId);
 
             InventoryReservation reservation = InventoryReservation.hold(
                     InventoryReservationId.newId(),

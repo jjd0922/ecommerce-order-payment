@@ -10,6 +10,7 @@ import com.orderpayment.domain.inventory.InventoryReservationStatus;
 import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.product.ProductId;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -56,7 +57,7 @@ public class InventoryReservationPersistenceAdapter
     @Override
     @Transactional
     public void confirmAll(List<InventoryReservation> reservations) {
-        for (InventoryReservation reservation : reservations) {
+        for (InventoryReservation reservation : orderedByProductId(reservations)) {
             int updatedRows = inventoryJpaRepository.confirm(
                     reservation.productId().value().toString(),
                     reservation.quantity()
@@ -75,7 +76,7 @@ public class InventoryReservationPersistenceAdapter
     @Override
     @Transactional
     public void releaseAll(List<InventoryReservation> reservations) {
-        for (InventoryReservation reservation : reservations) {
+        for (InventoryReservation reservation : orderedByProductId(reservations)) {
             int updatedRows = inventoryJpaRepository.release(
                     reservation.productId().value().toString(),
                     reservation.quantity()
@@ -128,5 +129,11 @@ public class InventoryReservationPersistenceAdapter
                 entity.expiresAt(),
                 entity.status()
         );
+    }
+
+    private static List<InventoryReservation> orderedByProductId(List<InventoryReservation> reservations) {
+        return reservations.stream()
+                .sorted(Comparator.comparing(reservation -> reservation.productId().value()))
+                .toList();
     }
 }
