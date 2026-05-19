@@ -8,6 +8,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface OutboxEventJpaRepository extends JpaRepository<OutboxEventJpaEntity, String> {
 
+    long countByStatus(OutboxEventStatus status);
+
     @Query(
             value = """
                     SELECT *
