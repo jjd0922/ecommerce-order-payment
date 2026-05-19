@@ -42,21 +42,23 @@ public class ConfirmPaymentTransactionService {
     private final CurrentTimePort currentTimePort;
     private final DomainEventPublisherPort domainEventPublisherPort;
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ConfirmPaymentAttempt beginApproval(ConfirmPaymentCommand command) {
-        Payment payment = paymentQueryPort.getPayment(command.paymentId());
+        Payment payment = paymentQueryPort.getPaymentForUpdate(command.paymentId());
         validateIdempotencyKey(command, payment);
 
         Order order = orderQueryPort.getOrder(payment.orderId());
-        if (payment.status() == PaymentStatus.APPROVED || payment.status() == PaymentStatus.FAILED) {
+        if (payment.status() != PaymentStatus.READY) {
             return ConfirmPaymentAttempt.completed(toResult(payment, order.status()));
         }
+        payment.startApproval();
+        paymentCommandPort.savePayment(payment);
         return ConfirmPaymentAttempt.readyForApproval(payment);
     }
 
     @Transactional
     public ConfirmPaymentResult applyApprovalResult(Payment paymentForApproval, PaymentApprovalResult approvalResult) {
-        Payment payment = paymentQueryPort.getPayment(paymentForApproval.id());
+        Payment payment = paymentQueryPort.getPaymentForUpdate(paymentForApproval.id());
         Order order = orderQueryPort.getOrder(payment.orderId());
         if (payment.status() == PaymentStatus.APPROVED || payment.status() == PaymentStatus.FAILED) {
             return toResult(payment, order.status());

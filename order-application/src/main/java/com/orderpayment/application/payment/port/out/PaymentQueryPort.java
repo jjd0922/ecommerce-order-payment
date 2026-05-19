@@ -9,5 +9,7 @@ public interface PaymentQueryPort {
 
     Payment getPayment(PaymentId paymentId);
 
+    Payment getPaymentForUpdate(PaymentId paymentId);
+
     Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey);
 }

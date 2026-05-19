@@ -95,7 +95,7 @@ class ConfirmPaymentServiceTest {
 
         assertThat(secondResult).isEqualTo(firstResult);
         assertThat(paymentApprovalPort.approveCount()).isEqualTo(1);
-        assertThat(paymentPort.saveCount()).isEqualTo(1);
+        assertThat(paymentPort.saveCount()).isEqualTo(2);
         assertThat(eventPublisher.events).hasSize(2);
     }
 
@@ -182,6 +182,11 @@ class ConfirmPaymentServiceTest {
                 throw new DomainException("payment not found");
             }
             return payment;
+        }
+
+        @Override
+        public Payment getPaymentForUpdate(PaymentId paymentId) {
+            return getPayment(paymentId);
         }
 
         @Override

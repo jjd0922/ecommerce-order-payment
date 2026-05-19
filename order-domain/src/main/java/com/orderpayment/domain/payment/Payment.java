@@ -61,13 +61,18 @@ public class Payment {
         return status;
     }
 
-    public void approve() {
+    public void startApproval() {
         ensureStatus(PaymentStatus.READY);
+        status = PaymentStatus.PROCESSING;
+    }
+
+    public void approve() {
+        ensureStatus(PaymentStatus.PROCESSING);
         status = PaymentStatus.APPROVED;
     }
 
     public void fail() {
-        ensureStatus(PaymentStatus.READY);
+        ensureStatus(PaymentStatus.PROCESSING);
         status = PaymentStatus.FAILED;
     }
 
