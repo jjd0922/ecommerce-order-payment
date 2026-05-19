@@ -1,5 +1,6 @@
 package com.orderpayment.api.payment;
 
+import com.orderpayment.api.common.RequestTracing;
 import com.orderpayment.application.payment.dto.ConfirmPaymentCommand;
 import com.orderpayment.application.payment.dto.ConfirmPaymentResult;
 import com.orderpayment.application.payment.dto.PreparePaymentCommand;
@@ -38,12 +39,19 @@ public class PaymentController {
             @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey,
             @Valid @RequestBody PreparePaymentRequest request
     ) {
-        PreparePaymentResult result = preparePaymentUseCase.prepare(new PreparePaymentCommand(
-                new OrderId(request.orderId()),
-                new IdempotencyKey(idempotencyKey)
-        ));
-        return ResponseEntity.created(URI.create("/v1/payments/" + result.paymentId().value()))
-                .body(PaymentResponse.from(result));
+        try {
+            RequestTracing.putOrderId(request.orderId());
+            PreparePaymentResult result = preparePaymentUseCase.prepare(new PreparePaymentCommand(
+                    new OrderId(request.orderId()),
+                    new IdempotencyKey(idempotencyKey)
+            ));
+            RequestTracing.putPaymentId(result.paymentId().value());
+            return ResponseEntity.created(URI.create("/v1/payments/" + result.paymentId().value()))
+                    .body(PaymentResponse.from(result));
+        } finally {
+            RequestTracing.removeOrderId();
+            RequestTracing.removePaymentId();
+        }
     }
 
     @PostMapping("/{paymentId}/confirm")
@@ -51,11 +59,18 @@ public class PaymentController {
             @PathVariable UUID paymentId,
             @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey
     ) {
-        ConfirmPaymentResult result = confirmPaymentUseCase.confirm(new ConfirmPaymentCommand(
-                new PaymentId(paymentId),
-                new IdempotencyKey(idempotencyKey)
-        ));
-        return ResponseEntity.ok(PaymentResponse.from(result));
+        try {
+            RequestTracing.putPaymentId(paymentId);
+            ConfirmPaymentResult result = confirmPaymentUseCase.confirm(new ConfirmPaymentCommand(
+                    new PaymentId(paymentId),
+                    new IdempotencyKey(idempotencyKey)
+            ));
+            RequestTracing.putOrderId(result.orderId().value());
+            return ResponseEntity.ok(PaymentResponse.from(result));
+        } finally {
+            RequestTracing.removeOrderId();
+            RequestTracing.removePaymentId();
+        }
     }
 
     public record PreparePaymentRequest(@NotNull UUID orderId) {
