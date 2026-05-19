@@ -15,6 +15,7 @@ import com.orderpayment.application.payment.port.out.PaymentApprovalResult;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.ConfirmPaymentService;
+import com.orderpayment.application.payment.service.ConfirmPaymentTransactionService;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.common.event.DomainEvent;
@@ -54,17 +55,17 @@ class ConfirmPaymentServiceTest {
     private final FakePaymentPort paymentPort = new FakePaymentPort();
     private final FakePaymentApprovalPort paymentApprovalPort = new FakePaymentApprovalPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
-    private final ConfirmPaymentService service = new ConfirmPaymentService(
+    private final ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
             paymentPort,
             paymentPort,
             orderPort,
             orderPort,
             inventoryReservationPort,
             inventoryReservationPort,
-            paymentApprovalPort,
             () -> now,
             eventPublisher
     );
+    private final ConfirmPaymentService service = new ConfirmPaymentService(paymentApprovalPort, transactionService);
 
     @Test
     @DisplayName("confirm 은 결제를 승인하고 재고 예약을 확정한다")
