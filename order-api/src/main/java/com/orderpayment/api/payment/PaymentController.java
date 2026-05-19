@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/payments")
+@RequestMapping("/v1/payments")
 public class PaymentController {
 
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
@@ -42,7 +42,7 @@ public class PaymentController {
                 new OrderId(request.orderId()),
                 new IdempotencyKey(idempotencyKey)
         ));
-        return ResponseEntity.created(URI.create("/payments/" + result.paymentId().value()))
+        return ResponseEntity.created(URI.create("/v1/payments/" + result.paymentId().value()))
                 .body(PaymentResponse.from(result));
     }
 

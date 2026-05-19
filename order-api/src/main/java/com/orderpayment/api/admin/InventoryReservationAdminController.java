@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/admin/inventory-reservations")
+@RequestMapping("/v1/admin/inventory-reservations")
 public class InventoryReservationAdminController {
 
     private final ExpireInventoryReservationsUseCase expireInventoryReservationsUseCase;

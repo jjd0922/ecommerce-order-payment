@@ -37,7 +37,7 @@ class OrderControllerTest {
     private CreateOrderUseCase createOrderUseCase;
 
     @Test
-    @DisplayName("POST /orders 는 주문을 생성하고 생성 결과를 반환한다")
+    @DisplayName("POST /v1/orders returns created order")
     void createOrder_whenRequestValid_thenReturnCreatedOrder() throws Exception {
         UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000401");
         UUID productId = UUID.fromString("00000000-0000-0000-0000-000000000501");
@@ -47,7 +47,7 @@ class OrderControllerTest {
                 OrderStatus.CREATED
         ));
 
-        mockMvc.perform(post("/orders")
+        mockMvc.perform(post("/v1/orders")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "orderLines", List.of(Map.of(
@@ -57,16 +57,16 @@ class OrderControllerTest {
                         ))))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("X-Request-Id", org.hamcrest.Matchers.notNullValue()))
-                .andExpect(header().string("Location", "/orders/" + orderId))
+                .andExpect(header().string("Location", "/v1/orders/" + orderId))
                 .andExpect(jsonPath("$.orderId").value(orderId.toString()))
                 .andExpect(jsonPath("$.totalAmount").value(2000.00))
                 .andExpect(jsonPath("$.status").value("CREATED"));
     }
 
     @Test
-    @DisplayName("POST /orders 는 요청이 유효하지 않으면 400 응답을 반환한다")
+    @DisplayName("POST /v1/orders returns problem detail when request is invalid")
     void createOrder_whenRequestInvalid_thenReturnBadRequest() throws Exception {
-        mockMvc.perform(post("/orders")
+        mockMvc.perform(post("/v1/orders")
                         .header("X-Request-Id", "request-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("orderLines", List.of()))))
