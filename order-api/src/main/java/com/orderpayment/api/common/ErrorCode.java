@@ -6,6 +6,7 @@ public enum ErrorCode {
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "invalid request"),
     IDEMPOTENCY_KEY_CONFLICT(HttpStatus.CONFLICT, "idempotency key conflict"),
     IDEMPOTENCY_IN_FLIGHT(HttpStatus.CONFLICT, "idempotency request in flight"),
+    PAYMENT_IN_PROGRESS(HttpStatus.CONFLICT, "payment approval in progress"),
     DOMAIN_RULE_VIOLATION(HttpStatus.CONFLICT, "domain rule violation"),
     UNPROCESSABLE_ENTITY(HttpStatus.UNPROCESSABLE_ENTITY, "unprocessable entity"),
     INFRASTRUCTURE_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "infrastructure error");

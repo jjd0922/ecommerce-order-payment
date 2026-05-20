@@ -173,6 +173,19 @@ class ConfirmPaymentServiceTest {
                 .isInstanceOf(IdempotencyKeyConflictException.class);
     }
 
+    @Test
+    @DisplayName("confirm throws when payment is already processing")
+    void confirm_whenPaymentAlreadyProcessing_thenThrowException() {
+        givenPreparedPayment();
+        Payment payment = paymentPort.getPayment(paymentId);
+        payment.startApproval(now.minusMinutes(1));
+        paymentPort.savePaymentWithoutCounting(payment);
+
+        assertThatThrownBy(() -> service.confirm(command()))
+                .isInstanceOf(PaymentInProgressException.class);
+        assertThat(paymentApprovalPort.approveCount()).isZero();
+    }
+
     private void givenPreparedPayment() {
         Order order = Order.create(orderId, List.of(
                 OrderItem.of(productId, "keyboard", Money.won(1000), 2)

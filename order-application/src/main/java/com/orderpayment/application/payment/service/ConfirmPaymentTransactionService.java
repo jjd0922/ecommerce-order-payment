@@ -5,6 +5,7 @@ import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
 import com.orderpayment.application.payment.IdempotencyKeyConflictException;
+import com.orderpayment.application.payment.PaymentInProgressException;
 import com.orderpayment.application.payment.dto.ConfirmPaymentCommand;
 import com.orderpayment.application.payment.dto.ConfirmPaymentResult;
 import com.orderpayment.application.payment.port.out.InventoryReservationCommandPort;
@@ -48,6 +49,9 @@ public class ConfirmPaymentTransactionService {
         validateIdempotencyKey(command, payment);
 
         Order order = orderQueryPort.getOrder(payment.orderId());
+        if (payment.status() == PaymentStatus.PROCESSING) {
+            throw new PaymentInProgressException("payment approval is still processing");
+        }
         if (payment.status() != PaymentStatus.READY) {
             return ConfirmPaymentAttempt.completed(toResult(payment, order.status()));
         }
