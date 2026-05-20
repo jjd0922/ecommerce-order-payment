@@ -9,7 +9,7 @@ import com.orderpayment.domain.payment.PaymentStatus;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-record ConfirmPaymentIdempotencyResponse(
+public record ConfirmPaymentIdempotencyResponse(
         UUID paymentId,
         UUID orderId,
         BigDecimal amount,
@@ -17,7 +17,7 @@ record ConfirmPaymentIdempotencyResponse(
         PaymentStatus paymentStatus
 ) {
 
-    static ConfirmPaymentIdempotencyResponse from(ConfirmPaymentResult result) {
+    public static ConfirmPaymentIdempotencyResponse from(ConfirmPaymentResult result) {
         return new ConfirmPaymentIdempotencyResponse(
                 result.paymentId().value(),
                 result.orderId().value(),
@@ -27,7 +27,7 @@ record ConfirmPaymentIdempotencyResponse(
         );
     }
 
-    ConfirmPaymentResult toResult() {
+    public ConfirmPaymentResult toResult() {
         return new ConfirmPaymentResult(
                 new PaymentId(paymentId),
                 new OrderId(orderId),

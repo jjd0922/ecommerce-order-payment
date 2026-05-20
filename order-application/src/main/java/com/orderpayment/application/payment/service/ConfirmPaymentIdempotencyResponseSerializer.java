@@ -13,7 +13,7 @@ public class ConfirmPaymentIdempotencyResponseSerializer {
         this.objectMapper = objectMapper;
     }
 
-    String serialize(ConfirmPaymentIdempotencyResponse response) {
+    public String serialize(ConfirmPaymentIdempotencyResponse response) {
         try {
             return objectMapper.writeValueAsString(response);
         } catch (JsonProcessingException exception) {
@@ -21,7 +21,7 @@ public class ConfirmPaymentIdempotencyResponseSerializer {
         }
     }
 
-    ConfirmPaymentIdempotencyResponse deserialize(String responseBody) {
+    public ConfirmPaymentIdempotencyResponse deserialize(String responseBody) {
         try {
             return objectMapper.readValue(responseBody, ConfirmPaymentIdempotencyResponse.class);
         } catch (JsonProcessingException exception) {

@@ -18,6 +18,7 @@ import com.orderpayment.application.payment.port.out.PaymentApprovalResult;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyHandler;
+import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyResponse;
 import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyResponseSerializer;
 import com.orderpayment.application.payment.service.ConfirmPaymentRequestHashService;
 import com.orderpayment.application.payment.service.ConfirmPaymentService;
@@ -68,12 +69,15 @@ class ConfirmPaymentServiceTest {
     private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
     private final FakePaymentApprovalPort paymentApprovalPort = new FakePaymentApprovalPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
+    private final ConfirmPaymentRequestHashService requestHashService = new ConfirmPaymentRequestHashService();
+    private final ConfirmPaymentIdempotencyResponseSerializer responseSerializer =
+            new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper());
     private final ConfirmPaymentIdempotencyHandler idempotencyHandler = new ConfirmPaymentIdempotencyHandler(
             idempotencyRecordPort,
             idempotencyRecordPort,
             () -> now,
-            new ConfirmPaymentRequestHashService(),
-            new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
+            requestHashService,
+            responseSerializer
     );
     private final ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
             paymentPort,
@@ -205,6 +209,46 @@ class ConfirmPaymentServiceTest {
         assertThat(paymentApprovalPort.approveCount()).isZero();
     }
 
+    @Test
+    @DisplayName("confirm replays completed response for same idempotency key and payment id")
+    void confirm_whenCompletedIdempotencyRecordExists_thenReplayResponse() {
+        givenPreparedPayment();
+        ConfirmPaymentResult completedResult = new ConfirmPaymentResult(
+                paymentId,
+                orderId,
+                Money.won(2000),
+                OrderStatus.PAID,
+                PaymentStatus.APPROVED
+        );
+        idempotencyRecordPort.save(completedRecord(command(), completedResult));
+
+        ConfirmPaymentResult result = service.confirm(command());
+
+        assertThat(result).isEqualTo(completedResult);
+        assertThat(paymentApprovalPort.approveCount()).isZero();
+        assertThat(paymentPort.getPayment(paymentId).status()).isEqualTo(PaymentStatus.READY);
+    }
+
+    @Test
+    @DisplayName("confirm rejects same idempotency key for different payment id")
+    void confirm_whenSameIdempotencyKeyUsedForDifferentPayment_thenThrowConflict() {
+        givenPreparedPayment();
+        PaymentId anotherPaymentId = PaymentId.newId();
+        ConfirmPaymentCommand firstCommand = new ConfirmPaymentCommand(anotherPaymentId, idempotencyKey);
+        ConfirmPaymentResult completedResult = new ConfirmPaymentResult(
+                anotherPaymentId,
+                orderId,
+                Money.won(2000),
+                OrderStatus.PAID,
+                PaymentStatus.APPROVED
+        );
+        idempotencyRecordPort.save(completedRecord(firstCommand, completedResult));
+
+        assertThatThrownBy(() -> service.confirm(command()))
+                .isInstanceOf(IdempotencyKeyConflictException.class);
+        assertThat(paymentApprovalPort.approveCount()).isZero();
+    }
+
     private void givenPreparedPayment() {
         Order order = Order.create(orderId, List.of(
                 OrderItem.of(productId, "keyboard", Money.won(1000), 2)
@@ -227,6 +271,17 @@ class ConfirmPaymentServiceTest {
 
     private ConfirmPaymentCommand command() {
         return new ConfirmPaymentCommand(paymentId, idempotencyKey);
+    }
+
+    private IdempotencyRecord completedRecord(ConfirmPaymentCommand command, ConfirmPaymentResult result) {
+        IdempotencyRecord record = IdempotencyRecord.inFlight(
+                command.idempotencyKey().value(),
+                requestHashService.hash(command),
+                now,
+                now.plusDays(1)
+        );
+        record.complete(responseSerializer.serialize(ConfirmPaymentIdempotencyResponse.from(result)));
+        return record;
     }
 
     private void awaitUntilPaymentProcessing() {
