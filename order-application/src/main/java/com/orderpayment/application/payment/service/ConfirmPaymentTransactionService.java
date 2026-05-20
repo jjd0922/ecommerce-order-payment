@@ -12,6 +12,7 @@ import com.orderpayment.application.payment.port.out.InventoryReservationQueryPo
 import com.orderpayment.application.payment.port.out.PaymentApprovalResult;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
+import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.event.DomainEvent;
 import com.orderpayment.domain.idempotency.IdempotencyRecord;
 import com.orderpayment.domain.inventory.InventoryReservation;
@@ -57,8 +58,11 @@ public class ConfirmPaymentTransactionService {
         if (payment.status() == PaymentStatus.PROCESSING) {
             throw new PaymentInProgressException("payment approval is still processing");
         }
-        if (payment.status() != PaymentStatus.READY) {
+        if (isCompleted(payment)) {
             return ConfirmPaymentAttempt.completed(toResult(payment, order.status()), decision.inFlightRecord());
+        }
+        if (payment.status() != PaymentStatus.READY) {
+            throw new DomainException("payment cannot be confirmed in current status");
         }
         payment.startApproval(currentTimePort.now());
         paymentCommandPort.savePayment(payment);
@@ -134,6 +138,10 @@ public class ConfirmPaymentTransactionService {
         domainEventPublisherPort.publishAll(events);
 
         return toResult(payment, order.status());
+    }
+
+    private static boolean isCompleted(Payment payment) {
+        return payment.status() == PaymentStatus.APPROVED || payment.status() == PaymentStatus.FAILED;
     }
 
     private static ConfirmPaymentResult toResult(Payment payment, OrderStatus orderStatus) {

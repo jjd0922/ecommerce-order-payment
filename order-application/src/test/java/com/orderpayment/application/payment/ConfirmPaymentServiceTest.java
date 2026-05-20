@@ -210,6 +210,19 @@ class ConfirmPaymentServiceTest {
     }
 
     @Test
+    @DisplayName("confirm throws when payment is cancelled")
+    void confirm_whenPaymentCancelled_thenThrowException() {
+        givenPreparedPayment();
+        Payment payment = paymentPort.getPayment(paymentId);
+        payment.cancel();
+        paymentPort.savePaymentWithoutCounting(payment);
+
+        assertThatThrownBy(() -> service.confirm(command()))
+                .isInstanceOf(DomainException.class);
+        assertThat(paymentApprovalPort.approveCount()).isZero();
+    }
+
+    @Test
     @DisplayName("confirm replays completed response for same idempotency key and payment id")
     void confirm_whenCompletedIdempotencyRecordExists_thenReplayResponse() {
         givenPreparedPayment();
