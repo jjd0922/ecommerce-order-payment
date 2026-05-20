@@ -50,7 +50,9 @@ public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentComma
                 new OrderId(UUID.fromString(entity.orderId())),
                 new Money(entity.amount()),
                 new IdempotencyKey(entity.idempotencyKey()),
-                entity.status()
+                entity.status(),
+                entity.approvalRequestedAt(),
+                entity.pgTransactionId()
         );
     }
 
@@ -60,7 +62,9 @@ public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentComma
                 payment.orderId().value().toString(),
                 payment.amount().amount(),
                 payment.idempotencyKey().value(),
-                payment.status()
+                payment.status(),
+                payment.approvalRequestedAt(),
+                payment.pgTransactionId()
         );
     }
 }

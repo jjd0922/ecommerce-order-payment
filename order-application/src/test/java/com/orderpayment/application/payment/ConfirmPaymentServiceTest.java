@@ -370,9 +370,9 @@ class ConfirmPaymentServiceTest {
                 await(releaseApprovalLatch);
             }
             if (failureReason != null) {
-                return PaymentApprovalResult.failed(failureReason);
-            }
-            return PaymentApprovalResult.approved();
+            return PaymentApprovalResult.failed("mock-pg-" + payment.id().value(), failureReason);
+        }
+            return PaymentApprovalResult.approved("mock-pg-" + payment.id().value());
         }
 
         void failNext(String failureReason) {

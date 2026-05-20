@@ -6,10 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.order.OrderId;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class PaymentTest {
+
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 5, 20, 10, 0);
 
     @Test
     @DisplayName("ready creates a READY payment")
@@ -25,9 +28,10 @@ class PaymentTest {
     void startApproval_whenReady_thenChangeStatusToProcessing() {
         Payment payment = payment();
 
-        payment.startApproval();
+        payment.startApproval(NOW);
 
         assertThat(payment.status()).isEqualTo(PaymentStatus.PROCESSING);
+        assertThat(payment.approvalRequestedAt()).isEqualTo(NOW);
     }
 
     @Test
@@ -35,18 +39,19 @@ class PaymentTest {
     void approve_whenProcessing_thenChangeStatusToApproved() {
         Payment payment = payment();
 
-        payment.startApproval();
-        payment.approve();
+        payment.startApproval(NOW);
+        payment.approve("pg-transaction-1");
 
         assertThat(payment.status()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(payment.pgTransactionId()).isEqualTo("pg-transaction-1");
     }
 
     @Test
     @DisplayName("cancel throws when payment is approved")
     void cancel_whenPaymentApproved_thenThrowException() {
         Payment payment = payment();
-        payment.startApproval();
-        payment.approve();
+        payment.startApproval(NOW);
+        payment.approve("pg-transaction-1");
 
         assertThatThrownBy(payment::cancel)
                 .isInstanceOf(DomainException.class);
@@ -56,10 +61,10 @@ class PaymentTest {
     @DisplayName("approve throws when payment already failed")
     void approve_whenPaymentAlreadyFailed_thenThrowException() {
         Payment payment = payment();
-        payment.startApproval();
-        payment.fail();
+        payment.startApproval(NOW);
+        payment.fail("pg-transaction-1");
 
-        assertThatThrownBy(payment::approve)
+        assertThatThrownBy(() -> payment.approve("pg-transaction-2"))
                 .isInstanceOf(DomainException.class);
     }
 

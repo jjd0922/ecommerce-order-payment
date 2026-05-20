@@ -12,6 +12,6 @@ public class MockPaymentApprovalAdapter implements PaymentApprovalPort {
 
     @Override
     public PaymentApprovalResult approve(Payment payment) {
-        return PaymentApprovalResult.approved();
+        return PaymentApprovalResult.approved("mock-pg-" + payment.id().value());
     }
 }

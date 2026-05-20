@@ -51,7 +51,7 @@ public class ConfirmPaymentTransactionService {
         if (payment.status() != PaymentStatus.READY) {
             return ConfirmPaymentAttempt.completed(toResult(payment, order.status()));
         }
-        payment.startApproval();
+        payment.startApproval(currentTimePort.now());
         paymentCommandPort.savePayment(payment);
         return ConfirmPaymentAttempt.readyForApproval(payment);
     }
@@ -65,9 +65,9 @@ public class ConfirmPaymentTransactionService {
         }
 
         if (approvalResult.success()) {
-            return approvePayment(payment, order);
+            return approvePayment(payment, order, approvalResult.pgTransactionId());
         }
-        return failPayment(payment, order, approvalResult.failureReason());
+        return failPayment(payment, order, approvalResult.pgTransactionId(), approvalResult.failureReason());
     }
 
     private static void validateIdempotencyKey(ConfirmPaymentCommand command, Payment payment) {
@@ -76,12 +76,12 @@ public class ConfirmPaymentTransactionService {
         }
     }
 
-    private ConfirmPaymentResult approvePayment(Payment payment, Order order) {
+    private ConfirmPaymentResult approvePayment(Payment payment, Order order, String pgTransactionId) {
         LocalDateTime occurredAt = currentTimePort.now();
         List<InventoryReservation> reservations = inventoryReservationQueryPort.findHeldReservationsByOrderId(order.id());
         List<DomainEvent> events = new ArrayList<>();
 
-        payment.approve();
+        payment.approve(pgTransactionId);
         order.markPaid();
         reservations.forEach(InventoryReservation::confirm);
 
@@ -102,12 +102,12 @@ public class ConfirmPaymentTransactionService {
         return toResult(payment, order.status());
     }
 
-    private ConfirmPaymentResult failPayment(Payment payment, Order order, String failureReason) {
+    private ConfirmPaymentResult failPayment(Payment payment, Order order, String pgTransactionId, String failureReason) {
         LocalDateTime occurredAt = currentTimePort.now();
         List<InventoryReservation> reservations = inventoryReservationQueryPort.findHeldReservationsByOrderId(order.id());
         List<DomainEvent> events = new ArrayList<>();
 
-        payment.fail();
+        payment.fail(pgTransactionId);
         order.markFailed();
         reservations.forEach(InventoryReservation::release);
 

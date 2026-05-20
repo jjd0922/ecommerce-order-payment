@@ -8,6 +8,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "payment")
@@ -30,15 +31,31 @@ public class PaymentJpaEntity {
     @Column(name = "status", nullable = false, length = 30)
     private PaymentStatus status;
 
+    @Column(name = "approval_requested_at")
+    private LocalDateTime approvalRequestedAt;
+
+    @Column(name = "pg_transaction_id", length = 100)
+    private String pgTransactionId;
+
     protected PaymentJpaEntity() {
     }
 
-    public PaymentJpaEntity(String id, String orderId, BigDecimal amount, String idempotencyKey, PaymentStatus status) {
+    public PaymentJpaEntity(
+            String id,
+            String orderId,
+            BigDecimal amount,
+            String idempotencyKey,
+            PaymentStatus status,
+            LocalDateTime approvalRequestedAt,
+            String pgTransactionId
+    ) {
         this.id = id;
         this.orderId = orderId;
         this.amount = amount;
         this.idempotencyKey = idempotencyKey;
         this.status = status;
+        this.approvalRequestedAt = approvalRequestedAt;
+        this.pgTransactionId = pgTransactionId;
     }
 
     public String id() {
@@ -59,5 +76,13 @@ public class PaymentJpaEntity {
 
     public PaymentStatus status() {
         return status;
+    }
+
+    public LocalDateTime approvalRequestedAt() {
+        return approvalRequestedAt;
+    }
+
+    public String pgTransactionId() {
+        return pgTransactionId;
     }
 }
