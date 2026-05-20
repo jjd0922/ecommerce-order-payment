@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS payment (
     pg_transaction_id VARCHAR(100) NULL,
     PRIMARY KEY (id),
     INDEX idx_payment_order_id (order_id),
+    INDEX idx_payment_status_approval_requested_at (status, approval_requested_at),
     CONSTRAINT fk_payment_order
         FOREIGN KEY (order_id)
         REFERENCES orders (id)

@@ -8,6 +8,9 @@ import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.payment.IdempotencyKey;
 import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentId;
+import com.orderpayment.domain.payment.PaymentStatus;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +40,18 @@ public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentComma
     public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
         return paymentJpaRepository.findByIdempotencyKey(idempotencyKey.value())
                 .map(this::toDomain);
+    }
+
+    @Override
+    public List<Payment> findProcessingPaymentsRequestedBefore(LocalDateTime requestedBefore, int limit) {
+        return paymentJpaRepository.findProcessingRequestedBefore(
+                        PaymentStatus.PROCESSING.name(),
+                        requestedBefore,
+                        limit
+                )
+                .stream()
+                .map(this::toDomain)
+                .toList();
     }
 
     @Override

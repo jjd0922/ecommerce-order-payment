@@ -3,6 +3,8 @@ package com.orderpayment.application.payment.port.out;
 import com.orderpayment.domain.payment.IdempotencyKey;
 import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentId;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface PaymentQueryPort {
@@ -12,4 +14,6 @@ public interface PaymentQueryPort {
     Payment getPaymentForUpdate(PaymentId paymentId);
 
     Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey);
+
+    List<Payment> findProcessingPaymentsRequestedBefore(LocalDateTime requestedBefore, int limit);
 }

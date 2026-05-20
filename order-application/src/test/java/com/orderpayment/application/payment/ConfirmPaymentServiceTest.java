@@ -267,6 +267,16 @@ class ConfirmPaymentServiceTest {
         }
 
         @Override
+        public List<Payment> findProcessingPaymentsRequestedBefore(LocalDateTime requestedBefore, int limit) {
+            return paymentsById.values().stream()
+                    .filter(payment -> payment.status() == PaymentStatus.PROCESSING)
+                    .filter(payment -> payment.approvalRequestedAt() != null)
+                    .filter(payment -> payment.approvalRequestedAt().isBefore(requestedBefore))
+                    .limit(limit)
+                    .toList();
+        }
+
+        @Override
         public void savePayment(Payment payment) {
             savePaymentWithoutCounting(payment);
             saveCount.incrementAndGet();
