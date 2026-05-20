@@ -19,6 +19,7 @@ import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.PreparePaymentService;
 import com.orderpayment.application.payment.service.PreparePaymentRequestHashService;
+import com.orderpayment.application.payment.service.PreparePaymentIdempotencyResponseSerializer;
 import com.orderpayment.application.payment.service.PreparePaymentTransactionService;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.event.DomainEvent;
@@ -59,6 +60,8 @@ class PreparePaymentServiceTest {
     private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
     private final PreparePaymentRequestHashService requestHashService = new PreparePaymentRequestHashService();
+    private final PreparePaymentIdempotencyResponseSerializer responseSerializer =
+            new PreparePaymentIdempotencyResponseSerializer(new ObjectMapper());
     private final PreparePaymentTransactionService transactionService = new PreparePaymentTransactionService(
             orderPort,
             orderPort,
@@ -69,8 +72,8 @@ class PreparePaymentServiceTest {
             eventPublisher,
             idempotencyRecordPort,
             idempotencyRecordPort,
-            new ObjectMapper(),
-            requestHashService
+            requestHashService,
+            responseSerializer
     );
     private final PreparePaymentService service = new PreparePaymentService(transactionService);
 

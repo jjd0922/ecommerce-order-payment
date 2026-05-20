@@ -16,6 +16,7 @@ import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentIdGeneratorPort;
 import com.orderpayment.application.payment.service.PreparePaymentService;
 import com.orderpayment.application.payment.service.PreparePaymentRequestHashService;
+import com.orderpayment.application.payment.service.PreparePaymentIdempotencyResponseSerializer;
 import com.orderpayment.application.payment.service.PreparePaymentTransactionService;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.common.event.DomainEvent;
@@ -266,8 +267,8 @@ class IdempotencyRecordConcurrencyIntegrationTest extends MysqlContainerTestSupp
                     },
                     idempotencyRecordPersistenceAdapter,
                     idempotencyRecordPersistenceAdapter,
-                    new ObjectMapper(),
-                    new PreparePaymentRequestHashService()
+                    new PreparePaymentRequestHashService(),
+                    new PreparePaymentIdempotencyResponseSerializer(new ObjectMapper())
             );
         }
 

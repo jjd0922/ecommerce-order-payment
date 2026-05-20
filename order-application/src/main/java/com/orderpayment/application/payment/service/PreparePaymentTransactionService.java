@@ -1,7 +1,5 @@
 package com.orderpayment.application.payment.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.CurrentTimePort;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
 import com.orderpayment.application.idempotency.IdempotencyInFlightException;
@@ -50,8 +48,8 @@ public class PreparePaymentTransactionService {
     private final DomainEventPublisherPort domainEventPublisherPort;
     private final IdempotencyRecordQueryPort idempotencyRecordQueryPort;
     private final IdempotencyRecordCommandPort idempotencyRecordCommandPort;
-    private final ObjectMapper objectMapper;
     private final PreparePaymentRequestHashService requestHashService;
+    private final PreparePaymentIdempotencyResponseSerializer responseSerializer;
 
     @Transactional
     public PreparePaymentResult prepare(PreparePaymentCommand command) {
@@ -76,7 +74,7 @@ public class PreparePaymentTransactionService {
         if (record.status() == IdempotencyRecordStatus.IN_FLIGHT) {
             throw new IdempotencyInFlightException("idempotency request is in flight");
         }
-        return deserialize(record.responseBody()).toResult();
+        return responseSerializer.deserialize(record.responseBody()).toResult();
     }
 
     private PreparePaymentResult prepareNewPayment(PreparePaymentCommand command, String requestHash) {
@@ -91,7 +89,7 @@ public class PreparePaymentTransactionService {
 
         Order order = orderQueryPort.getOrder(command.orderId());
         PreparePaymentResult result = prepareNewPayment(command, order);
-        record.complete(serialize(PreparePaymentIdempotencyResponse.from(result)));
+        record.complete(responseSerializer.serialize(PreparePaymentIdempotencyResponse.from(result)));
         idempotencyRecordCommandPort.save(record);
         return result;
     }
@@ -139,22 +137,6 @@ public class PreparePaymentTransactionService {
         domainEventPublisherPort.publishAll(events);
 
         return toResult(payment, order.status());
-    }
-
-    private String serialize(PreparePaymentIdempotencyResponse response) {
-        try {
-            return objectMapper.writeValueAsString(response);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("failed to serialize idempotency response", exception);
-        }
-    }
-
-    private PreparePaymentIdempotencyResponse deserialize(String responseBody) {
-        try {
-            return objectMapper.readValue(responseBody, PreparePaymentIdempotencyResponse.class);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("failed to deserialize idempotency response", exception);
-        }
     }
 
     private static PreparePaymentResult toResult(Payment payment, OrderStatus orderStatus) {
