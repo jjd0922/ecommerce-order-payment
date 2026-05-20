@@ -3,7 +3,10 @@ package com.orderpayment.application.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordCommandPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordQueryPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
 import com.orderpayment.application.payment.dto.ConfirmPaymentCommand;
@@ -14,11 +17,15 @@ import com.orderpayment.application.payment.port.out.PaymentApprovalPort;
 import com.orderpayment.application.payment.port.out.PaymentApprovalResult;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
+import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyHandler;
+import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyResponseSerializer;
+import com.orderpayment.application.payment.service.ConfirmPaymentRequestHashService;
 import com.orderpayment.application.payment.service.ConfirmPaymentService;
 import com.orderpayment.application.payment.service.ConfirmPaymentTransactionService;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.common.event.DomainEvent;
+import com.orderpayment.domain.idempotency.IdempotencyRecord;
 import com.orderpayment.domain.inventory.Inventory;
 import com.orderpayment.domain.inventory.InventoryReservation;
 import com.orderpayment.domain.inventory.InventoryReservationId;
@@ -58,8 +65,16 @@ class ConfirmPaymentServiceTest {
     private final FakeOrderPort orderPort = new FakeOrderPort();
     private final FakeInventoryReservationPort inventoryReservationPort = new FakeInventoryReservationPort();
     private final FakePaymentPort paymentPort = new FakePaymentPort();
+    private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
     private final FakePaymentApprovalPort paymentApprovalPort = new FakePaymentApprovalPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
+    private final ConfirmPaymentIdempotencyHandler idempotencyHandler = new ConfirmPaymentIdempotencyHandler(
+            idempotencyRecordPort,
+            idempotencyRecordPort,
+            () -> now,
+            new ConfirmPaymentRequestHashService(),
+            new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
+    );
     private final ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
             paymentPort,
             paymentPort,
@@ -68,7 +83,8 @@ class ConfirmPaymentServiceTest {
             inventoryReservationPort,
             inventoryReservationPort,
             () -> now,
-            eventPublisher
+            eventPublisher,
+            idempotencyHandler
     );
     private final ConfirmPaymentService service = new ConfirmPaymentService(
             paymentApprovalPort,
@@ -165,12 +181,15 @@ class ConfirmPaymentServiceTest {
     }
 
     @Test
-    @DisplayName("confirm 은 다른 멱등키로 요청하면 예외를 던진다")
-    void confirm_whenDifferentIdempotencyKey_thenThrowException() {
+    @DisplayName("confirm accepts idempotency key independent from prepare key")
+    void confirm_whenConfirmIdempotencyKeyDiffersFromPrepareKey_thenApprovePayment() {
         givenPreparedPayment();
+        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
 
-        assertThatThrownBy(() -> service.confirm(new ConfirmPaymentCommand(paymentId, new IdempotencyKey("another-key"))))
-                .isInstanceOf(IdempotencyKeyConflictException.class);
+        ConfirmPaymentResult result = service.confirm(new ConfirmPaymentCommand(paymentId, new IdempotencyKey("another-key")));
+
+        assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(paymentApprovalPort.approveCount()).isEqualTo(1);
     }
 
     @Test
@@ -409,6 +428,22 @@ class ConfirmPaymentServiceTest {
 
         int approveCount() {
             return approveCount.get();
+        }
+    }
+
+    private static class FakeIdempotencyRecordPort
+            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
+
+        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
+
+        @Override
+        public Optional<IdempotencyRecord> findByKey(String key) {
+            return Optional.ofNullable(records.get(key));
+        }
+
+        @Override
+        public void save(IdempotencyRecord record) {
+            records.put(record.key(), record);
         }
     }
 

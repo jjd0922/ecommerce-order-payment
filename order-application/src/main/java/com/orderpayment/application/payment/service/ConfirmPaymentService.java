@@ -37,11 +37,15 @@ public class ConfirmPaymentService implements ConfirmPaymentUseCase {
     public ConfirmPaymentResult confirm(ConfirmPaymentCommand command) {
         ConfirmPaymentAttempt attempt = transactionService.beginApproval(command);
         if (!attempt.requiresApproval()) {
+            if (attempt.inFlightRecord() != null) {
+                transactionService.completeIdempotencyRecord(attempt.inFlightRecord(), attempt.completedResult());
+            }
             return attempt.completedResult();
         }
 
         PaymentApprovalResult approvalResult = paymentApprovalPort.approve(attempt.payment());
         ConfirmPaymentResult result = transactionService.applyApprovalResult(attempt.payment(), approvalResult);
+        transactionService.completeIdempotencyRecord(attempt.inFlightRecord(), result);
         if (approvalResult.success()) {
             confirmSuccessCounter.increment();
         } else {
