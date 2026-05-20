@@ -25,14 +25,10 @@ import com.orderpayment.domain.order.OrderItem;
 import com.orderpayment.domain.order.OrderStatus;
 import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentPreparedEvent;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -55,10 +51,11 @@ public class PreparePaymentTransactionService {
     private final IdempotencyRecordQueryPort idempotencyRecordQueryPort;
     private final IdempotencyRecordCommandPort idempotencyRecordCommandPort;
     private final ObjectMapper objectMapper;
+    private final PreparePaymentRequestHashService requestHashService;
 
     @Transactional
     public PreparePaymentResult prepare(PreparePaymentCommand command) {
-        String requestHash = requestHash(command);
+        String requestHash = requestHashService.hash(command);
         return idempotencyRecordQueryPort.findByKey(command.idempotencyKey().value())
                 .map(record -> replay(record, requestHash))
                 .orElseGet(() -> prepareNewPayment(command, requestHash));
@@ -66,7 +63,7 @@ public class PreparePaymentTransactionService {
 
     @Transactional(readOnly = true)
     public PreparePaymentResult replayExisting(PreparePaymentCommand command) {
-        String requestHash = requestHash(command);
+        String requestHash = requestHashService.hash(command);
         IdempotencyRecord record = idempotencyRecordQueryPort.findByKey(command.idempotencyKey().value())
                 .orElseThrow(() -> new IdempotencyInFlightException("idempotency request is in flight"));
         return replay(record, requestHash);
@@ -157,16 +154,6 @@ public class PreparePaymentTransactionService {
             return objectMapper.readValue(responseBody, PreparePaymentIdempotencyResponse.class);
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("failed to deserialize idempotency response", exception);
-        }
-    }
-
-    private static String requestHash(PreparePaymentCommand command) {
-        String rawRequest = "prepare-payment:" + command.orderId().value();
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(rawRequest.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 algorithm is not available", exception);
         }
     }
 
