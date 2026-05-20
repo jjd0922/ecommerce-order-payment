@@ -18,6 +18,7 @@ import com.orderpayment.application.payment.port.out.InventoryReservationCommand
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.PreparePaymentService;
+import com.orderpayment.application.payment.service.PreparePaymentIdempotencyHandler;
 import com.orderpayment.application.payment.service.PreparePaymentRequestHashService;
 import com.orderpayment.application.payment.service.PreparePaymentIdempotencyResponseSerializer;
 import com.orderpayment.application.payment.service.PreparePaymentTransactionService;
@@ -62,6 +63,13 @@ class PreparePaymentServiceTest {
     private final PreparePaymentRequestHashService requestHashService = new PreparePaymentRequestHashService();
     private final PreparePaymentIdempotencyResponseSerializer responseSerializer =
             new PreparePaymentIdempotencyResponseSerializer(new ObjectMapper());
+    private final PreparePaymentIdempotencyHandler idempotencyHandler = new PreparePaymentIdempotencyHandler(
+            idempotencyRecordPort,
+            idempotencyRecordPort,
+            () -> now,
+            requestHashService,
+            responseSerializer
+    );
     private final PreparePaymentTransactionService transactionService = new PreparePaymentTransactionService(
             orderPort,
             orderPort,
@@ -70,10 +78,7 @@ class PreparePaymentServiceTest {
             () -> paymentId,
             () -> now,
             eventPublisher,
-            idempotencyRecordPort,
-            idempotencyRecordPort,
-            requestHashService,
-            responseSerializer
+            idempotencyHandler
     );
     private final PreparePaymentService service = new PreparePaymentService(transactionService);
 
