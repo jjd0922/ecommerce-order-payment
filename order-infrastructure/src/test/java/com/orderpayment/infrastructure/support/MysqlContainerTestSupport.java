@@ -25,7 +25,7 @@ public abstract class MysqlContainerTestSupport {
     static void initializeSchema() throws Exception {
         try (Connection connection = getConnection();
              Statement statement = connection.createStatement()) {
-            String schemaSql = Files.readString(Path.of("docker/mysql/init/01-schema.sql"));
+            String schemaSql = Files.readString(resolveSchemaPath());
             for (String sql : schemaSql.split(";")) {
                 if (!sql.isBlank()) {
                     statement.execute(sql);
@@ -44,5 +44,13 @@ public abstract class MysqlContainerTestSupport {
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", MYSQL::getDriverClassName);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
+    }
+
+    private static Path resolveSchemaPath() {
+        Path fromRoot = Path.of("docker/mysql/init/01-schema.sql");
+        if (Files.exists(fromRoot)) {
+            return fromRoot;
+        }
+        return Path.of("../docker/mysql/init/01-schema.sql");
     }
 }

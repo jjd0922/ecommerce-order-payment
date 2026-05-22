@@ -10,7 +10,9 @@
 
 ## 결정
 
-도메인 상태 변경과 같은 데이터베이스 트랜잭션에서 Outbox 이벤트를 저장한다. 폴링 릴레이는 `FOR UPDATE SKIP LOCKED`로 발행 대기 이벤트를 배치 단위로 선점하고, 발행 성공 후 published 상태로 변경한다.
+도메인 상태 변경과 같은 데이터베이스 트랜잭션에서 Outbox 이벤트를 저장한다. 폴링 릴레이는 `FOR UPDATE SKIP LOCKED`로 발행 대상 이벤트를 배치 단위로 선점하고, 발행 성공 후 published 상태로 변경한다.
+
+릴레이 대상은 `PENDING`과 `FAILED` 이벤트이다. 발행 실패 시 이벤트는 `FAILED` 상태와 실패 사유, retry count를 남기고 다음 폴링에서 다시 시도한다.
 
 ## 결과
 

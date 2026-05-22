@@ -42,10 +42,7 @@ public class OutboxEventRelayService {
 
     private int publishPendingEventsInternal() {
         int publishedCount = 0;
-        for (OutboxEventJpaEntity event : outboxEventJpaRepository.findPendingForUpdateSkipLocked(
-                OutboxEventStatus.PENDING.name(),
-                batchSize
-        )) {
+        for (OutboxEventJpaEntity event : outboxEventJpaRepository.findPublishableForUpdateSkipLocked(batchSize)) {
             try {
                 loggingDomainEventPublisherAdapter.publish(event);
                 event.markPublished(LocalDateTime.now());

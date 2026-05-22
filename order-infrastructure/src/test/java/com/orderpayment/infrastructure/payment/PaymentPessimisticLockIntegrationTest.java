@@ -59,6 +59,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -66,7 +68,10 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @DataJpaTest
-@Import(InfrastructureJpaConfiguration.class)
+@Import({
+        InfrastructureJpaConfiguration.class,
+        PaymentPessimisticLockIntegrationTest.TestConfig.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
 
@@ -89,6 +94,18 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
     @Autowired
     private InventoryReservationJpaRepository inventoryReservationJpaRepository;
 
+    @Autowired
+    private PaymentPersistenceAdapter paymentAdapter;
+
+    @Autowired
+    private OrderPersistenceAdapter orderAdapter;
+
+    @Autowired
+    private ConfirmPaymentService service;
+
+    @Autowired
+    private BlockingPaymentApprovalPort approvalPort;
+
     @DynamicPropertySource
     static void registerProperties(DynamicPropertyRegistry registry) {
         registerDataSourceProperties(registry);
@@ -109,35 +126,6 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
     @Test
     @DisplayName("same payment confirm requests use pessimistic lock and approve once")
     void confirm_whenSamePaymentRequestedConcurrently_thenApproveOnlyOnce() throws Exception {
-        BlockingPaymentApprovalPort approvalPort = new BlockingPaymentApprovalPort();
-        PaymentPersistenceAdapter paymentAdapter = new PaymentPersistenceAdapter(paymentJpaRepository);
-        OrderPersistenceAdapter orderAdapter = new OrderPersistenceAdapter(orderJpaRepository);
-        InventoryReservationPersistenceAdapter reservationAdapter =
-                new InventoryReservationPersistenceAdapter(inventoryJpaRepository, inventoryReservationJpaRepository);
-        FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
-        ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
-                paymentAdapter,
-                paymentAdapter,
-                orderAdapter,
-                orderAdapter,
-                reservationAdapter,
-                reservationAdapter,
-                fixedTimePort(),
-                events -> {
-                },
-                new ConfirmPaymentIdempotencyHandler(
-                        idempotencyRecordPort,
-                        idempotencyRecordPort,
-                        fixedTimePort(),
-                        new ConfirmPaymentRequestHashService(),
-                        new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
-                )
-        );
-        ConfirmPaymentService service = new ConfirmPaymentService(
-                approvalPort,
-                transactionService,
-                new SimpleMeterRegistry()
-        );
         int requestCount = 2;
         ExecutorService executorService = Executors.newFixedThreadPool(requestCount);
         CountDownLatch readyLatch = new CountDownLatch(requestCount);
@@ -250,6 +238,84 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(exception);
+        }
+    }
+
+    @TestConfiguration
+    static class TestConfig {
+
+        @Bean
+        PaymentPersistenceAdapter paymentPersistenceAdapter(PaymentJpaRepository paymentJpaRepository) {
+            return new PaymentPersistenceAdapter(paymentJpaRepository);
+        }
+
+        @Bean
+        OrderPersistenceAdapter orderPersistenceAdapter(OrderJpaRepository orderJpaRepository) {
+            return new OrderPersistenceAdapter(orderJpaRepository);
+        }
+
+        @Bean
+        InventoryReservationPersistenceAdapter inventoryReservationPersistenceAdapter(
+                InventoryJpaRepository inventoryJpaRepository,
+                InventoryReservationJpaRepository inventoryReservationJpaRepository
+        ) {
+            return new InventoryReservationPersistenceAdapter(inventoryJpaRepository, inventoryReservationJpaRepository);
+        }
+
+        @Bean
+        FakeIdempotencyRecordPort fakeIdempotencyRecordPort() {
+            return new FakeIdempotencyRecordPort();
+        }
+
+        @Bean
+        ConfirmPaymentIdempotencyHandler confirmPaymentIdempotencyHandler(
+                FakeIdempotencyRecordPort idempotencyRecordPort
+        ) {
+            return new ConfirmPaymentIdempotencyHandler(
+                    idempotencyRecordPort,
+                    idempotencyRecordPort,
+                    fixedTimePort(),
+                    new ConfirmPaymentRequestHashService(),
+                    new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
+            );
+        }
+
+        @Bean
+        ConfirmPaymentTransactionService confirmPaymentTransactionService(
+                PaymentPersistenceAdapter paymentAdapter,
+                OrderPersistenceAdapter orderAdapter,
+                InventoryReservationPersistenceAdapter reservationAdapter,
+                ConfirmPaymentIdempotencyHandler idempotencyHandler
+        ) {
+            return new ConfirmPaymentTransactionService(
+                    paymentAdapter,
+                    paymentAdapter,
+                    orderAdapter,
+                    orderAdapter,
+                    reservationAdapter,
+                    reservationAdapter,
+                    fixedTimePort(),
+                    events -> {
+                    },
+                    idempotencyHandler
+            );
+        }
+
+        @Bean
+        BlockingPaymentApprovalPort blockingPaymentApprovalPort() {
+            return new BlockingPaymentApprovalPort();
+        }
+
+        @Bean
+        ConfirmPaymentService confirmPaymentService(
+                BlockingPaymentApprovalPort approvalPort,
+                ConfirmPaymentTransactionService transactionService
+        ) {
+            return new ConfirmPaymentService(
+                    approvalPort,
+                    transactionService,
+                    new SimpleMeterRegistry()
+            );
         }
     }
 

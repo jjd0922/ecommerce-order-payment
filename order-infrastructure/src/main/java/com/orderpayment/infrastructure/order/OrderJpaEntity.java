@@ -61,4 +61,8 @@ public class OrderJpaEntity {
         items.add(item);
         item.assignOrder(this);
     }
+
+    public void updateStatus(OrderStatus status) {
+        this.status = status;
+    }
 }

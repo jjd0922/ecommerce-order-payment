@@ -16,6 +16,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +58,7 @@ class OutboxSkipLockedIntegrationTest extends MysqlContainerTestSupport {
 
     @BeforeEach
     void setUp() {
+        publisher.reset();
         outboxEventJpaRepository.save(new OutboxEventJpaEntity(
                 eventId,
                 "PaymentApproved",
@@ -79,6 +81,7 @@ class OutboxSkipLockedIntegrationTest extends MysqlContainerTestSupport {
     @Test
     @DisplayName("outbox relay workers skip locked event claimed by another worker")
     void publishPendingEvents_whenTwoRelaysRunConcurrently_thenPublishEventOnce() throws Exception {
+        publisher.blockNextPublish();
         ExecutorService executorService = Executors.newFixedThreadPool(2);
         CountDownLatch readyLatch = new CountDownLatch(2);
         CountDownLatch startLatch = new CountDownLatch(1);
@@ -101,6 +104,25 @@ class OutboxSkipLockedIntegrationTest extends MysqlContainerTestSupport {
 
         assertThat(publisher.publishCount()).isEqualTo(1);
         assertThat(publishedCounts).containsExactlyInAnyOrder(0, 1);
+        assertThat(outboxEventJpaRepository.findById(eventId).orElseThrow().status())
+                .isEqualTo(OutboxEventStatus.PUBLISHED);
+    }
+
+    @Test
+    @DisplayName("failed outbox event is retried by next relay polling")
+    void publishPendingEvents_whenFailedEventExists_thenRetryAndPublish() {
+        publisher.failNext("mock relay failure");
+
+        int firstPublishedCount = outboxEventRelayService.publishPendingEvents();
+        OutboxEventJpaEntity failedEvent = outboxEventJpaRepository.findById(eventId).orElseThrow();
+
+        assertThat(firstPublishedCount).isZero();
+        assertThat(failedEvent.status()).isEqualTo(OutboxEventStatus.FAILED);
+
+        int secondPublishedCount = outboxEventRelayService.publishPendingEvents();
+
+        assertThat(secondPublishedCount).isEqualTo(1);
+        assertThat(publisher.publishCount()).isEqualTo(2);
         assertThat(outboxEventJpaRepository.findById(eventId).orElseThrow().status())
                 .isEqualTo(OutboxEventStatus.PUBLISHED);
     }
@@ -138,14 +160,41 @@ class OutboxSkipLockedIntegrationTest extends MysqlContainerTestSupport {
     static class BlockingOutboxPublisher extends LoggingDomainEventPublisherAdapter {
 
         private final AtomicInteger publishCount = new AtomicInteger();
-        private final CountDownLatch publishStartedLatch = new CountDownLatch(1);
-        private final CountDownLatch releasePublishLatch = new CountDownLatch(1);
+        private final AtomicBoolean blockPublish = new AtomicBoolean();
+        private volatile RuntimeException nextFailure;
+        private volatile CountDownLatch publishStartedLatch = new CountDownLatch(0);
+        private volatile CountDownLatch releasePublishLatch = new CountDownLatch(0);
 
         @Override
         public void publish(OutboxEventJpaEntity event) {
             publishCount.incrementAndGet();
-            publishStartedLatch.countDown();
-            await(releasePublishLatch);
+            RuntimeException failure = nextFailure;
+            if (failure != null) {
+                nextFailure = null;
+                throw failure;
+            }
+            if (blockPublish.compareAndSet(true, false)) {
+                publishStartedLatch.countDown();
+                await(releasePublishLatch);
+            }
+        }
+
+        void reset() {
+            publishCount.set(0);
+            blockPublish.set(false);
+            nextFailure = null;
+            publishStartedLatch = new CountDownLatch(0);
+            releasePublishLatch = new CountDownLatch(0);
+        }
+
+        void blockNextPublish() {
+            publishStartedLatch = new CountDownLatch(1);
+            releasePublishLatch = new CountDownLatch(1);
+            blockPublish.set(true);
+        }
+
+        void failNext(String message) {
+            nextFailure = new IllegalStateException(message);
         }
 
         boolean awaitPublishStarted() throws InterruptedException {

@@ -31,9 +31,11 @@ public class OrderPersistenceAdapter implements OrderQueryPort, OrderCommandPort
     @Override
     @Transactional
     public void saveOrder(Order order) {
-        orderJpaRepository.deleteById(order.id().value().toString());
-        orderJpaRepository.flush();
-        orderJpaRepository.save(toEntity(order));
+        orderJpaRepository.findById(order.id().value().toString())
+                .ifPresentOrElse(
+                        entity -> entity.updateStatus(order.status()),
+                        () -> orderJpaRepository.save(toEntity(order))
+                );
     }
 
     private Order toDomain(OrderJpaEntity entity) {
