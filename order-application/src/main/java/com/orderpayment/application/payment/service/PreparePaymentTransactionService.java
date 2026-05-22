@@ -31,6 +31,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -102,7 +103,9 @@ public class PreparePaymentTransactionService {
         LocalDateTime occurredAt = currentTimePort.now();
         LocalDateTime expiresAt = currentTimePort.now().plus(RESERVATION_TTL);
         List<DomainEvent> events = new ArrayList<>();
-        for (OrderItem item : order.items()) {
+        for (OrderItem item : order.items().stream()
+                .sorted(Comparator.comparing(item -> item.productId().value()))
+                .toList()) {
             InventoryReservation reservation = inventoryReservationCommandPort.hold(
                     order.id(),
                     item.productId(),

@@ -10,23 +10,36 @@ import com.orderpayment.domain.inventory.InventoryReservation;
 import com.orderpayment.domain.inventory.InventoryReservationExpiredEvent;
 import java.time.LocalDateTime;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 public class ExpireInventoryReservationsService implements ExpireInventoryReservationsUseCase {
 
     private final InventoryReservationRecoveryPort inventoryReservationRecoveryPort;
     private final CurrentTimePort currentTimePort;
     private final DomainEventPublisherPort domainEventPublisherPort;
+    private final int batchSize;
+
+    public ExpireInventoryReservationsService(
+            InventoryReservationRecoveryPort inventoryReservationRecoveryPort,
+            CurrentTimePort currentTimePort,
+            DomainEventPublisherPort domainEventPublisherPort,
+            @Value("${order-payment.inventory-reservation.expiration.batch-size:100}") int batchSize
+    ) {
+        this.inventoryReservationRecoveryPort = inventoryReservationRecoveryPort;
+        this.currentTimePort = currentTimePort;
+        this.domainEventPublisherPort = domainEventPublisherPort;
+        this.batchSize = batchSize;
+    }
 
     @Override
     @Transactional
     public ExpireInventoryReservationsResult expire() {
         LocalDateTime now = currentTimePort.now();
-        List<InventoryReservation> expiredReservations = inventoryReservationRecoveryPort.expireExpiredReservations(now);
+        List<InventoryReservation> expiredReservations =
+                inventoryReservationRecoveryPort.expireExpiredReservations(now, batchSize);
         domainEventPublisherPort.publishAll(toEvents(expiredReservations, now));
         return new ExpireInventoryReservationsResult(expiredReservations.size(), now);
     }

@@ -26,7 +26,8 @@ class ExpireInventoryReservationsServiceTest {
     private final ExpireInventoryReservationsService service = new ExpireInventoryReservationsService(
             recoveryPort,
             () -> now,
-            eventPublisher
+            eventPublisher,
+            100
     );
 
     @Test
@@ -39,6 +40,7 @@ class ExpireInventoryReservationsServiceTest {
         assertThat(result.expiredCount()).isEqualTo(1);
         assertThat(result.processedAt()).isEqualTo(now);
         assertThat(recoveryPort.requestedAt).isEqualTo(now);
+        assertThat(recoveryPort.requestedBatchSize).isEqualTo(100);
         assertThat(eventPublisher.events).hasSize(1);
         assertThat(eventPublisher.events.get(0).eventType()).isEqualTo("InventoryReservationExpired");
     }
@@ -69,11 +71,13 @@ class ExpireInventoryReservationsServiceTest {
     private static class FakeInventoryReservationRecoveryPort implements InventoryReservationRecoveryPort {
 
         private LocalDateTime requestedAt;
+        private int requestedBatchSize;
         private List<InventoryReservation> expiredReservations = List.of();
 
         @Override
-        public List<InventoryReservation> expireExpiredReservations(LocalDateTime now) {
+        public List<InventoryReservation> expireExpiredReservations(LocalDateTime now, int batchSize) {
             requestedAt = now;
+            requestedBatchSize = batchSize;
             return expiredReservations;
         }
     }
