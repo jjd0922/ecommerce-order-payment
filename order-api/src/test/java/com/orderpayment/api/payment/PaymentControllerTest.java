@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.idempotency.IdempotencyInFlightException;
 import com.orderpayment.application.payment.IdempotencyKeyConflictException;
+import com.orderpayment.application.payment.PaymentInProgressException;
 import com.orderpayment.application.payment.dto.ConfirmPaymentResult;
 import com.orderpayment.application.payment.dto.PreparePaymentResult;
 import com.orderpayment.application.payment.port.in.ConfirmPaymentUseCase;
@@ -153,5 +154,18 @@ class PaymentControllerTest {
                         .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("UNPROCESSABLE_ENTITY"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/payments/{paymentId}/confirm returns 409 when payment is processing")
+    void confirmPayment_whenPaymentIsProcessing_thenReturnConflict() throws Exception {
+        UUID paymentId = UUID.fromString("00000000-0000-0000-0000-000000000601");
+        when(confirmPaymentUseCase.confirm(any()))
+                .thenThrow(new PaymentInProgressException("payment approval is still processing"));
+
+        mockMvc.perform(post("/v1/payments/{paymentId}/confirm", paymentId)
+                        .header("Idempotency-Key", "payment-request-1"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PAYMENT_IN_PROGRESS"));
     }
 }

@@ -8,6 +8,9 @@ import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.payment.IdempotencyKey;
 import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentId;
+import com.orderpayment.domain.payment.PaymentStatus;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +43,18 @@ public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentComma
     }
 
     @Override
+    public List<Payment> findProcessingPaymentsRequestedBefore(LocalDateTime requestedBefore, int limit) {
+        return paymentJpaRepository.findProcessingRequestedBefore(
+                        PaymentStatus.PROCESSING.name(),
+                        requestedBefore,
+                        limit
+                )
+                .stream()
+                .map(this::toDomain)
+                .toList();
+    }
+
+    @Override
     public void savePayment(Payment payment) {
         paymentJpaRepository.save(toEntity(payment));
     }
@@ -50,7 +65,9 @@ public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentComma
                 new OrderId(UUID.fromString(entity.orderId())),
                 new Money(entity.amount()),
                 new IdempotencyKey(entity.idempotencyKey()),
-                entity.status()
+                entity.status(),
+                entity.approvalRequestedAt(),
+                entity.pgTransactionId()
         );
     }
 
@@ -60,7 +77,9 @@ public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentComma
                 payment.orderId().value().toString(),
                 payment.amount().amount(),
                 payment.idempotencyKey().value(),
-                payment.status()
+                payment.status(),
+                payment.approvalRequestedAt(),
+                payment.pgTransactionId()
         );
     }
 }

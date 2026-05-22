@@ -173,6 +173,19 @@ class ConfirmPaymentServiceTest {
                 .isInstanceOf(IdempotencyKeyConflictException.class);
     }
 
+    @Test
+    @DisplayName("confirm throws when payment is already processing")
+    void confirm_whenPaymentAlreadyProcessing_thenThrowException() {
+        givenPreparedPayment();
+        Payment payment = paymentPort.getPayment(paymentId);
+        payment.startApproval(now.minusMinutes(1));
+        paymentPort.savePaymentWithoutCounting(payment);
+
+        assertThatThrownBy(() -> service.confirm(command()))
+                .isInstanceOf(PaymentInProgressException.class);
+        assertThat(paymentApprovalPort.approveCount()).isZero();
+    }
+
     private void givenPreparedPayment() {
         Order order = Order.create(orderId, List.of(
                 OrderItem.of(productId, "keyboard", Money.won(1000), 2)
@@ -264,6 +277,16 @@ class ConfirmPaymentServiceTest {
         @Override
         public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
             return Optional.ofNullable(paymentsByKey.get(idempotencyKey));
+        }
+
+        @Override
+        public List<Payment> findProcessingPaymentsRequestedBefore(LocalDateTime requestedBefore, int limit) {
+            return paymentsById.values().stream()
+                    .filter(payment -> payment.status() == PaymentStatus.PROCESSING)
+                    .filter(payment -> payment.approvalRequestedAt() != null)
+                    .filter(payment -> payment.approvalRequestedAt().isBefore(requestedBefore))
+                    .limit(limit)
+                    .toList();
         }
 
         @Override
@@ -370,9 +393,9 @@ class ConfirmPaymentServiceTest {
                 await(releaseApprovalLatch);
             }
             if (failureReason != null) {
-                return PaymentApprovalResult.failed(failureReason);
-            }
-            return PaymentApprovalResult.approved();
+            return PaymentApprovalResult.failed("mock-pg-" + payment.id().value(), failureReason);
+        }
+            return PaymentApprovalResult.approved("mock-pg-" + payment.id().value());
         }
 
         void failNext(String failureReason) {

@@ -3,6 +3,7 @@ package com.orderpayment.api.common;
 import com.orderpayment.application.common.InfrastructureException;
 import com.orderpayment.application.idempotency.IdempotencyInFlightException;
 import com.orderpayment.application.payment.IdempotencyKeyConflictException;
+import com.orderpayment.application.payment.PaymentInProgressException;
 import com.orderpayment.domain.common.DomainException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -26,6 +27,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IdempotencyInFlightException.class)
     public ResponseEntity<ProblemDetail> handleIdempotencyInFlight(IdempotencyInFlightException exception) {
         return handle(ErrorCode.IDEMPOTENCY_IN_FLIGHT, exception.getMessage());
+    }
+
+    @ExceptionHandler(PaymentInProgressException.class)
+    public ResponseEntity<ProblemDetail> handlePaymentInProgress(PaymentInProgressException exception) {
+        return handle(ErrorCode.PAYMENT_IN_PROGRESS, exception.getMessage());
     }
 
     @ExceptionHandler(DomainException.class)
