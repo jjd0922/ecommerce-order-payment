@@ -1,23 +1,15 @@
 package com.orderpayment.application.payment.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.CurrentTimePort;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
-import com.orderpayment.application.idempotency.IdempotencyInFlightException;
-import com.orderpayment.application.idempotency.port.out.IdempotencyRecordCommandPort;
-import com.orderpayment.application.idempotency.port.out.IdempotencyRecordQueryPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
-import com.orderpayment.application.payment.IdempotencyKeyConflictException;
 import com.orderpayment.application.payment.dto.PreparePaymentCommand;
 import com.orderpayment.application.payment.dto.PreparePaymentResult;
 import com.orderpayment.application.payment.port.out.InventoryReservationCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentIdGeneratorPort;
 import com.orderpayment.domain.common.event.DomainEvent;
-import com.orderpayment.domain.idempotency.IdempotencyRecord;
-import com.orderpayment.domain.idempotency.IdempotencyRecordStatus;
 import com.orderpayment.domain.inventory.InventoryReservation;
 import com.orderpayment.domain.inventory.InventoryReservedEvent;
 import com.orderpayment.domain.order.Order;
@@ -25,14 +17,10 @@ import com.orderpayment.domain.order.OrderItem;
 import com.orderpayment.domain.order.OrderStatus;
 import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentPreparedEvent;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -43,7 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class PreparePaymentTransactionService {
 
     private static final Duration RESERVATION_TTL = Duration.ofMinutes(10);
-    private static final Duration IDEMPOTENCY_TTL = Duration.ofDays(1);
 
     private final OrderQueryPort orderQueryPort;
     private final OrderCommandPort orderCommandPort;
@@ -52,51 +39,24 @@ public class PreparePaymentTransactionService {
     private final PaymentIdGeneratorPort paymentIdGeneratorPort;
     private final CurrentTimePort currentTimePort;
     private final DomainEventPublisherPort domainEventPublisherPort;
-    private final IdempotencyRecordQueryPort idempotencyRecordQueryPort;
-    private final IdempotencyRecordCommandPort idempotencyRecordCommandPort;
-    private final ObjectMapper objectMapper;
+    private final PreparePaymentIdempotencyHandler idempotencyHandler;
 
     @Transactional
     public PreparePaymentResult prepare(PreparePaymentCommand command) {
-        String requestHash = requestHash(command);
-        return idempotencyRecordQueryPort.findByKey(command.idempotencyKey().value())
-                .map(record -> replay(record, requestHash))
-                .orElseGet(() -> prepareNewPayment(command, requestHash));
+        PreparePaymentIdempotencyDecision decision = idempotencyHandler.resolve(command);
+        if (decision.hasReplayResult()) {
+            return decision.replayResult();
+        }
+
+        Order order = orderQueryPort.getOrder(command.orderId());
+        PreparePaymentResult result = prepareNewPayment(command, order);
+        idempotencyHandler.complete(decision.inFlightRecord(), result);
+        return result;
     }
 
     @Transactional(readOnly = true)
     public PreparePaymentResult replayExisting(PreparePaymentCommand command) {
-        String requestHash = requestHash(command);
-        IdempotencyRecord record = idempotencyRecordQueryPort.findByKey(command.idempotencyKey().value())
-                .orElseThrow(() -> new IdempotencyInFlightException("idempotency request is in flight"));
-        return replay(record, requestHash);
-    }
-
-    private PreparePaymentResult replay(IdempotencyRecord record, String requestHash) {
-        if (!record.hasSameRequestHash(requestHash)) {
-            throw new IdempotencyKeyConflictException("idempotency key was already used with different payment request");
-        }
-        if (record.status() == IdempotencyRecordStatus.IN_FLIGHT) {
-            throw new IdempotencyInFlightException("idempotency request is in flight");
-        }
-        return deserialize(record.responseBody()).toResult();
-    }
-
-    private PreparePaymentResult prepareNewPayment(PreparePaymentCommand command, String requestHash) {
-        LocalDateTime now = currentTimePort.now();
-        IdempotencyRecord record = IdempotencyRecord.inFlight(
-                command.idempotencyKey().value(),
-                requestHash,
-                now,
-                now.plus(IDEMPOTENCY_TTL)
-        );
-        idempotencyRecordCommandPort.save(record);
-
-        Order order = orderQueryPort.getOrder(command.orderId());
-        PreparePaymentResult result = prepareNewPayment(command, order);
-        record.complete(serialize(PreparePaymentIdempotencyResponse.from(result)));
-        idempotencyRecordCommandPort.save(record);
-        return result;
+        return idempotencyHandler.replayExisting(command);
     }
 
     private PreparePaymentResult prepareNewPayment(PreparePaymentCommand command, Order order) {
@@ -142,32 +102,6 @@ public class PreparePaymentTransactionService {
         domainEventPublisherPort.publishAll(events);
 
         return toResult(payment, order.status());
-    }
-
-    private String serialize(PreparePaymentIdempotencyResponse response) {
-        try {
-            return objectMapper.writeValueAsString(response);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("failed to serialize idempotency response", exception);
-        }
-    }
-
-    private PreparePaymentIdempotencyResponse deserialize(String responseBody) {
-        try {
-            return objectMapper.readValue(responseBody, PreparePaymentIdempotencyResponse.class);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("failed to deserialize idempotency response", exception);
-        }
-    }
-
-    private static String requestHash(PreparePaymentCommand command) {
-        String rawRequest = "prepare-payment:" + command.orderId().value();
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(rawRequest.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 algorithm is not available", exception);
-        }
     }
 
     private static PreparePaymentResult toResult(Payment payment, OrderStatus orderStatus) {

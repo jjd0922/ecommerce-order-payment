@@ -18,6 +18,9 @@ import com.orderpayment.application.payment.port.out.InventoryReservationCommand
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.PreparePaymentService;
+import com.orderpayment.application.payment.service.PreparePaymentIdempotencyHandler;
+import com.orderpayment.application.payment.service.PreparePaymentRequestHashService;
+import com.orderpayment.application.payment.service.PreparePaymentIdempotencyResponseSerializer;
 import com.orderpayment.application.payment.service.PreparePaymentTransactionService;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.event.DomainEvent;
@@ -35,11 +38,7 @@ import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentId;
 import com.orderpayment.domain.payment.PaymentStatus;
 import com.orderpayment.domain.product.ProductId;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -61,6 +60,16 @@ class PreparePaymentServiceTest {
     private final FakePaymentPort paymentPort = new FakePaymentPort();
     private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
+    private final PreparePaymentRequestHashService requestHashService = new PreparePaymentRequestHashService();
+    private final PreparePaymentIdempotencyResponseSerializer responseSerializer =
+            new PreparePaymentIdempotencyResponseSerializer(new ObjectMapper());
+    private final PreparePaymentIdempotencyHandler idempotencyHandler = new PreparePaymentIdempotencyHandler(
+            idempotencyRecordPort,
+            idempotencyRecordPort,
+            () -> now,
+            requestHashService,
+            responseSerializer
+    );
     private final PreparePaymentTransactionService transactionService = new PreparePaymentTransactionService(
             orderPort,
             orderPort,
@@ -69,9 +78,7 @@ class PreparePaymentServiceTest {
             () -> paymentId,
             () -> now,
             eventPublisher,
-            idempotencyRecordPort,
-            idempotencyRecordPort,
-            new ObjectMapper()
+            idempotencyHandler
     );
     private final PreparePaymentService service = new PreparePaymentService(transactionService);
 
@@ -137,7 +144,7 @@ class PreparePaymentServiceTest {
         inventoryReservationPort.save(Inventory.of(productId, 5));
         idempotencyRecordPort.save(IdempotencyRecord.inFlight(
                 "payment-request-1",
-                requestHash(orderId),
+                requestHashService.hash(command(orderId, "payment-request-1")),
                 now,
                 now.plusDays(1)
         ));
@@ -205,7 +212,7 @@ class PreparePaymentServiceTest {
     private static IdempotencyRecord completedRecord(String key, OrderId orderId, PaymentId paymentId) {
         IdempotencyRecord record = IdempotencyRecord.inFlight(
                 key,
-                requestHash(orderId),
+                new PreparePaymentRequestHashService().hash(command(orderId, key)),
                 LocalDateTime.of(2026, 5, 3, 21, 0),
                 LocalDateTime.of(2026, 5, 4, 21, 0)
         );
@@ -213,16 +220,6 @@ class PreparePaymentServiceTest {
                 {"paymentId":"%s","orderId":"%s","amount":2000.00,"orderStatus":"PAYMENT_PENDING","paymentStatus":"READY"}
                 """.formatted(paymentId.value(), orderId.value()).trim());
         return record;
-    }
-
-    private static String requestHash(OrderId orderId) {
-        String rawRequest = "prepare-payment:" + orderId.value();
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(rawRequest.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException(exception);
-        }
     }
 
     private static class FakeOrderPort implements OrderQueryPort, OrderCommandPort {

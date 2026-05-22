@@ -14,7 +14,10 @@ import com.orderpayment.application.payment.dto.PreparePaymentResult;
 import com.orderpayment.application.payment.port.out.InventoryReservationCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentIdGeneratorPort;
+import com.orderpayment.application.payment.service.PreparePaymentIdempotencyHandler;
 import com.orderpayment.application.payment.service.PreparePaymentService;
+import com.orderpayment.application.payment.service.PreparePaymentRequestHashService;
+import com.orderpayment.application.payment.service.PreparePaymentIdempotencyResponseSerializer;
 import com.orderpayment.application.payment.service.PreparePaymentTransactionService;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.common.event.DomainEvent;
@@ -252,7 +255,7 @@ class IdempotencyRecordConcurrencyIntegrationTest extends MysqlContainerTestSupp
                 OrderPersistenceAdapter orderPersistenceAdapter,
                 InventoryReservationPersistenceAdapter inventoryReservationPersistenceAdapter,
                 PaymentPersistenceAdapter paymentPersistenceAdapter,
-                IdempotencyRecordPersistenceAdapter idempotencyRecordPersistenceAdapter
+                PreparePaymentIdempotencyHandler idempotencyHandler
         ) {
             return new PreparePaymentTransactionService(
                     orderPersistenceAdapter,
@@ -263,9 +266,20 @@ class IdempotencyRecordConcurrencyIntegrationTest extends MysqlContainerTestSupp
                     () -> NOW,
                     events -> {
                     },
+                    idempotencyHandler
+            );
+        }
+
+        @Bean
+        PreparePaymentIdempotencyHandler preparePaymentIdempotencyHandler(
+                IdempotencyRecordPersistenceAdapter idempotencyRecordPersistenceAdapter
+        ) {
+            return new PreparePaymentIdempotencyHandler(
                     idempotencyRecordPersistenceAdapter,
                     idempotencyRecordPersistenceAdapter,
-                    new ObjectMapper()
+                    () -> NOW,
+                    new PreparePaymentRequestHashService(),
+                    new PreparePaymentIdempotencyResponseSerializer(new ObjectMapper())
             );
         }
 
