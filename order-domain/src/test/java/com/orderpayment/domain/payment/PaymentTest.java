@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 class PaymentTest {
 
     @Test
-    @DisplayName("ready 는 READY 상태의 결제를 생성한다")
+    @DisplayName("ready creates a READY payment")
     void ready_whenCalled_thenCreateReadyPayment() {
         Payment payment = payment();
 
@@ -21,19 +21,31 @@ class PaymentTest {
     }
 
     @Test
-    @DisplayName("approve 는 결제 상태를 APPROVED 로 변경한다")
-    void approve_whenReady_thenChangeStatusToApproved() {
+    @DisplayName("startApproval changes READY payment to PROCESSING")
+    void startApproval_whenReady_thenChangeStatusToProcessing() {
         Payment payment = payment();
 
+        payment.startApproval();
+
+        assertThat(payment.status()).isEqualTo(PaymentStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("approve changes PROCESSING payment to APPROVED")
+    void approve_whenProcessing_thenChangeStatusToApproved() {
+        Payment payment = payment();
+
+        payment.startApproval();
         payment.approve();
 
         assertThat(payment.status()).isEqualTo(PaymentStatus.APPROVED);
     }
 
     @Test
-    @DisplayName("cancel 은 승인된 결제이면 예외를 던진다")
+    @DisplayName("cancel throws when payment is approved")
     void cancel_whenPaymentApproved_thenThrowException() {
         Payment payment = payment();
+        payment.startApproval();
         payment.approve();
 
         assertThatThrownBy(payment::cancel)
@@ -41,9 +53,10 @@ class PaymentTest {
     }
 
     @Test
-    @DisplayName("approve 는 이미 실패한 결제이면 예외를 던진다")
+    @DisplayName("approve throws when payment already failed")
     void approve_whenPaymentAlreadyFailed_thenThrowException() {
         Payment payment = payment();
+        payment.startApproval();
         payment.fail();
 
         assertThatThrownBy(payment::approve)

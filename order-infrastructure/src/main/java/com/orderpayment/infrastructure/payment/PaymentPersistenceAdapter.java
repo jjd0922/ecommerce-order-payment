@@ -27,6 +27,13 @@ public class PaymentPersistenceAdapter implements PaymentQueryPort, PaymentComma
     }
 
     @Override
+    public Payment getPaymentForUpdate(PaymentId paymentId) {
+        return paymentJpaRepository.findByIdForUpdate(paymentId.value().toString())
+                .map(this::toDomain)
+                .orElseThrow(() -> new DomainException("payment not found"));
+    }
+
+    @Override
     public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
         return paymentJpaRepository.findByIdempotencyKey(idempotencyKey.value())
                 .map(this::toDomain);

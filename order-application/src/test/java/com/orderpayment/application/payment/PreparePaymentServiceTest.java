@@ -207,6 +207,11 @@ class PreparePaymentServiceTest {
         }
 
         @Override
+        public Payment getPaymentForUpdate(PaymentId paymentId) {
+            return getPayment(paymentId);
+        }
+
+        @Override
         public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
             return Optional.ofNullable(payments.get(idempotencyKey));
         }
