@@ -1,6 +1,8 @@
 package com.orderpayment.application.idempotency;
 
-public class IdempotencyInFlightException extends RuntimeException {
+import com.orderpayment.application.common.ApplicationException;
+
+public class IdempotencyInFlightException extends ApplicationException {
 
     public IdempotencyInFlightException(String message) {
         super(message);

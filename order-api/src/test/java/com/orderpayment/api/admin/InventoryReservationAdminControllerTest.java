@@ -26,13 +26,13 @@ class InventoryReservationAdminControllerTest {
     private ExpireInventoryReservationsUseCase expireInventoryReservationsUseCase;
 
     @Test
-    @DisplayName("POST /admin/inventory-reservations/expire 는 만료 처리 결과를 반환한다")
+    @DisplayName("POST /v1/admin/inventory-reservations/expire returns expiration result")
     void expireInventoryReservations_whenRequested_thenReturnExpiredResult() throws Exception {
         LocalDateTime processedAt = LocalDateTime.of(2026, 5, 5, 10, 0);
         when(expireInventoryReservationsUseCase.expire())
                 .thenReturn(new ExpireInventoryReservationsResult(3, processedAt));
 
-        mockMvc.perform(post("/admin/inventory-reservations/expire"))
+        mockMvc.perform(post("/v1/admin/inventory-reservations/expire"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Request-Id", org.hamcrest.Matchers.notNullValue()))
                 .andExpect(header().string("Cache-Control", "no-store"))

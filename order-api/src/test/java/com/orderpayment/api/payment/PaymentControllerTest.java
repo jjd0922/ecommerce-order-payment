@@ -8,10 +8,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.orderpayment.application.idempotency.IdempotencyInFlightException;
+import com.orderpayment.application.payment.IdempotencyKeyConflictException;
 import com.orderpayment.application.payment.dto.ConfirmPaymentResult;
 import com.orderpayment.application.payment.dto.PreparePaymentResult;
 import com.orderpayment.application.payment.port.in.ConfirmPaymentUseCase;
 import com.orderpayment.application.payment.port.in.PreparePaymentUseCase;
+import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.order.OrderStatus;
@@ -43,7 +46,7 @@ class PaymentControllerTest {
     private ConfirmPaymentUseCase confirmPaymentUseCase;
 
     @Test
-    @DisplayName("POST /payments/prepare 는 결제를 준비하고 생성 결과를 반환한다")
+    @DisplayName("POST /v1/payments/prepare returns created payment")
     void preparePayment_whenRequestValid_thenReturnCreatedPayment() throws Exception {
         UUID paymentId = UUID.fromString("00000000-0000-0000-0000-000000000601");
         UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
@@ -55,20 +58,20 @@ class PaymentControllerTest {
                 PaymentStatus.READY
         ));
 
-        mockMvc.perform(post("/payments/prepare")
+        mockMvc.perform(post("/v1/payments/prepare")
                         .header("Idempotency-Key", "payment-request-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("X-Request-Id", org.hamcrest.Matchers.notNullValue()))
-                .andExpect(header().string("Location", "/payments/" + paymentId))
+                .andExpect(header().string("Location", "/v1/payments/" + paymentId))
                 .andExpect(jsonPath("$.paymentId").value(paymentId.toString()))
                 .andExpect(jsonPath("$.orderStatus").value("PAYMENT_PENDING"))
                 .andExpect(jsonPath("$.paymentStatus").value("READY"));
     }
 
     @Test
-    @DisplayName("POST /payments/{paymentId}/confirm 는 결제를 승인하고 결과를 반환한다")
+    @DisplayName("POST /v1/payments/{paymentId}/confirm returns approved payment")
     void confirmPayment_whenRequestValid_thenReturnApprovedPayment() throws Exception {
         UUID paymentId = UUID.fromString("00000000-0000-0000-0000-000000000601");
         UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
@@ -80,7 +83,7 @@ class PaymentControllerTest {
                 PaymentStatus.APPROVED
         ));
 
-        mockMvc.perform(post("/payments/{paymentId}/confirm", paymentId)
+        mockMvc.perform(post("/v1/payments/{paymentId}/confirm", paymentId)
                         .header("X-Request-Id", "request-456")
                         .header("Idempotency-Key", "payment-request-1"))
                 .andExpect(status().isOk())
@@ -91,13 +94,64 @@ class PaymentControllerTest {
     }
 
     @Test
-    @DisplayName("POST /payments/prepare 는 멱등키가 없으면 400 응답을 반환한다")
+    @DisplayName("POST /v1/payments/prepare returns problem detail when idempotency key is missing")
     void preparePayment_whenIdempotencyKeyMissing_thenReturnBadRequest() throws Exception {
         UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
 
-        mockMvc.perform(post("/payments/prepare")
+        mockMvc.perform(post("/v1/payments/prepare")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.title").value("invalid request"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/payments/prepare returns 409 when idempotency key conflicts")
+    void preparePayment_whenIdempotencyKeyConflicts_thenReturnConflict() throws Exception {
+        UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
+        when(preparePaymentUseCase.prepare(any()))
+                .thenThrow(new IdempotencyKeyConflictException("idempotency key was already used"));
+
+        mockMvc.perform(post("/v1/payments/prepare")
+                        .header("X-Request-Id", "request-789")
+                        .header("Idempotency-Key", "payment-request-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"))
+                .andExpect(jsonPath("$.requestId").value("request-789"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/payments/prepare returns 409 when idempotency request is in flight")
+    void preparePayment_whenIdempotencyRequestIsInFlight_thenReturnConflict() throws Exception {
+        UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
+        when(preparePaymentUseCase.prepare(any()))
+                .thenThrow(new IdempotencyInFlightException("idempotency request is in flight"));
+
+        mockMvc.perform(post("/v1/payments/prepare")
+                        .header("Idempotency-Key", "payment-request-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_IN_FLIGHT"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/payments/prepare returns 422 when inventory is insufficient")
+    void preparePayment_whenInventoryInsufficient_thenReturnUnprocessableEntity() throws Exception {
+        UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000701");
+        when(preparePaymentUseCase.prepare(any()))
+                .thenThrow(new DomainException("inventory is insufficient"));
+
+        mockMvc.perform(post("/v1/payments/prepare")
+                        .header("Idempotency-Key", "payment-request-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("orderId", orderId))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("UNPROCESSABLE_ENTITY"));
     }
 }

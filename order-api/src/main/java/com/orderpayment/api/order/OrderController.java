@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/orders")
+@RequestMapping("/v1/orders")
 public class OrderController {
 
     private final CreateOrderUseCase createOrderUseCase;
@@ -29,7 +29,7 @@ public class OrderController {
     @PostMapping
     public ResponseEntity<CreateOrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest request) {
         CreateOrderResult result = createOrderUseCase.create(request.toCommand());
-        return ResponseEntity.created(URI.create("/orders/" + result.orderId().value()))
+        return ResponseEntity.created(URI.create("/v1/orders/" + result.orderId().value()))
                 .body(CreateOrderResponse.from(result));
     }
 
