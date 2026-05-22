@@ -14,17 +14,14 @@ public interface OutboxEventJpaRepository extends JpaRepository<OutboxEventJpaEn
             value = """
                     SELECT *
                     FROM outbox_event
-                    WHERE status = :status
+                    WHERE status IN ('PENDING', 'FAILED')
                     ORDER BY occurred_at ASC, id ASC
                     LIMIT :limit
                     FOR UPDATE SKIP LOCKED
                     """,
             nativeQuery = true
     )
-    List<OutboxEventJpaEntity> findPendingForUpdateSkipLocked(
-            @Param("status") String status,
-            @Param("limit") int limit
-    );
+    List<OutboxEventJpaEntity> findPublishableForUpdateSkipLocked(@Param("limit") int limit);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
