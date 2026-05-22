@@ -120,15 +120,13 @@ erDiagram
         uuid id PK
         string status
         decimal total_amount
-        string currency
-        datetime created_at
-        datetime updated_at
     }
 
     ORDER_LINE {
         bigint id PK
         uuid order_id FK
         uuid product_id FK
+        string product_name
         int quantity
         decimal unit_price
     }
@@ -138,17 +136,15 @@ erDiagram
         uuid order_id FK
         string status
         decimal amount
-        string currency
-        string failure_reason
-        datetime created_at
-        datetime updated_at
+        string idempotency_key
+        datetime approval_requested_at
+        string pg_transaction_id
     }
 
     INVENTORY {
         uuid product_id PK
         int available_quantity
         int held_quantity
-        datetime updated_at
     }
 
     INVENTORY_RESERVATION {
@@ -158,23 +154,23 @@ erDiagram
         int quantity
         string status
         datetime expires_at
-        datetime created_at
-        datetime updated_at
     }
 
     OUTBOX_EVENT {
         uuid id PK
-        string aggregate_type
         uuid aggregate_id
         string event_type
         string payload
         string status
+        datetime occurred_at
         datetime created_at
         datetime published_at
+        int retry_count
+        string last_error
     }
 
     IDEMPOTENCY_RECORD {
-        string key PK
+        string idempotency_key PK
         string request_hash
         string response_body
         string status
@@ -186,7 +182,7 @@ erDiagram
         uuid id PK
         string name
         decimal price
-        string status
+        boolean selling
     }
 
     ORDER ||--|{ ORDER_LINE : contains
