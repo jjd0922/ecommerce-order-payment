@@ -4,7 +4,6 @@ import com.orderpayment.application.common.port.out.CurrentTimePort;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
-import com.orderpayment.application.payment.IdempotencyKeyConflictException;
 import com.orderpayment.application.payment.PaymentInProgressException;
 import com.orderpayment.application.payment.dto.ConfirmPaymentCommand;
 import com.orderpayment.application.payment.dto.ConfirmPaymentResult;
@@ -13,7 +12,9 @@ import com.orderpayment.application.payment.port.out.InventoryReservationQueryPo
 import com.orderpayment.application.payment.port.out.PaymentApprovalResult;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
+import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.event.DomainEvent;
+import com.orderpayment.domain.idempotency.IdempotencyRecord;
 import com.orderpayment.domain.inventory.InventoryReservation;
 import com.orderpayment.domain.inventory.InventoryReservationConfirmedEvent;
 import com.orderpayment.domain.inventory.InventoryReservationReleasedEvent;
@@ -42,22 +43,30 @@ public class ConfirmPaymentTransactionService {
     private final InventoryReservationCommandPort inventoryReservationCommandPort;
     private final CurrentTimePort currentTimePort;
     private final DomainEventPublisherPort domainEventPublisherPort;
+    private final ConfirmPaymentIdempotencyHandler idempotencyHandler;
 
     @Transactional
     public ConfirmPaymentAttempt beginApproval(ConfirmPaymentCommand command) {
+        ConfirmPaymentIdempotencyDecision decision = idempotencyHandler.resolve(command);
+        if (decision.hasReplayResult()) {
+            return ConfirmPaymentAttempt.completed(decision.replayResult());
+        }
+
         Payment payment = paymentQueryPort.getPaymentForUpdate(command.paymentId());
-        validateIdempotencyKey(command, payment);
 
         Order order = orderQueryPort.getOrder(payment.orderId());
         if (payment.status() == PaymentStatus.PROCESSING) {
             throw new PaymentInProgressException("payment approval is still processing");
         }
+        if (isCompleted(payment)) {
+            return ConfirmPaymentAttempt.completed(toResult(payment, order.status()), decision.inFlightRecord());
+        }
         if (payment.status() != PaymentStatus.READY) {
-            return ConfirmPaymentAttempt.completed(toResult(payment, order.status()));
+            throw new DomainException("payment cannot be confirmed in current status");
         }
         payment.startApproval(currentTimePort.now());
         paymentCommandPort.savePayment(payment);
-        return ConfirmPaymentAttempt.readyForApproval(payment);
+        return ConfirmPaymentAttempt.readyForApproval(payment, decision.inFlightRecord());
     }
 
     @Transactional
@@ -74,10 +83,9 @@ public class ConfirmPaymentTransactionService {
         return failPayment(payment, order, approvalResult.pgTransactionId(), approvalResult.failureReason());
     }
 
-    private static void validateIdempotencyKey(ConfirmPaymentCommand command, Payment payment) {
-        if (!payment.idempotencyKey().equals(command.idempotencyKey())) {
-            throw new IdempotencyKeyConflictException("idempotency key does not match payment request");
-        }
+    @Transactional
+    public void completeIdempotencyRecord(IdempotencyRecord record, ConfirmPaymentResult result) {
+        idempotencyHandler.complete(record, result);
     }
 
     private ConfirmPaymentResult approvePayment(Payment payment, Order order, String pgTransactionId) {
@@ -130,6 +138,10 @@ public class ConfirmPaymentTransactionService {
         domainEventPublisherPort.publishAll(events);
 
         return toResult(payment, order.status());
+    }
+
+    private static boolean isCompleted(Payment payment) {
+        return payment.status() == PaymentStatus.APPROVED || payment.status() == PaymentStatus.FAILED;
     }
 
     private static ConfirmPaymentResult toResult(Payment payment, OrderStatus orderStatus) {

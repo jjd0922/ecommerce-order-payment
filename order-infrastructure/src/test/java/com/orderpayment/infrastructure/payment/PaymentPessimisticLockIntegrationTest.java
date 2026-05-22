@@ -2,7 +2,10 @@ package com.orderpayment.infrastructure.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.CurrentTimePort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordCommandPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordQueryPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
 import com.orderpayment.application.payment.dto.ConfirmPaymentCommand;
@@ -10,9 +13,13 @@ import com.orderpayment.application.payment.port.out.InventoryReservationCommand
 import com.orderpayment.application.payment.port.out.InventoryReservationQueryPort;
 import com.orderpayment.application.payment.port.out.PaymentApprovalPort;
 import com.orderpayment.application.payment.port.out.PaymentApprovalResult;
+import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyHandler;
+import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyResponseSerializer;
+import com.orderpayment.application.payment.service.ConfirmPaymentRequestHashService;
 import com.orderpayment.application.payment.service.ConfirmPaymentService;
 import com.orderpayment.application.payment.service.ConfirmPaymentTransactionService;
 import com.orderpayment.domain.common.Money;
+import com.orderpayment.domain.idempotency.IdempotencyRecord;
 import com.orderpayment.domain.inventory.InventoryReservationStatus;
 import com.orderpayment.domain.order.OrderId;
 import com.orderpayment.domain.order.OrderStatus;
@@ -37,8 +44,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -104,6 +114,7 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
         OrderPersistenceAdapter orderAdapter = new OrderPersistenceAdapter(orderJpaRepository);
         InventoryReservationPersistenceAdapter reservationAdapter =
                 new InventoryReservationPersistenceAdapter(inventoryJpaRepository, inventoryReservationJpaRepository);
+        FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
         ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
                 paymentAdapter,
                 paymentAdapter,
@@ -113,7 +124,14 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
                 reservationAdapter,
                 fixedTimePort(),
                 events -> {
-                }
+                },
+                new ConfirmPaymentIdempotencyHandler(
+                        idempotencyRecordPort,
+                        idempotencyRecordPort,
+                        fixedTimePort(),
+                        new ConfirmPaymentRequestHashService(),
+                        new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
+                )
         );
         ConfirmPaymentService service = new ConfirmPaymentService(
                 approvalPort,
@@ -259,6 +277,22 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
 
         int approveCount() {
             return approveCount.get();
+        }
+    }
+
+    private static class FakeIdempotencyRecordPort
+            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
+
+        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
+
+        @Override
+        public Optional<IdempotencyRecord> findByKey(String key) {
+            return Optional.ofNullable(records.get(key));
+        }
+
+        @Override
+        public void save(IdempotencyRecord record) {
+            records.put(record.key(), record);
         }
     }
 }

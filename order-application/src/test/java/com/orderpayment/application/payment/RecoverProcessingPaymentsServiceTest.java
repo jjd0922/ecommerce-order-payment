@@ -2,7 +2,10 @@ package com.orderpayment.application.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordCommandPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordQueryPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
 import com.orderpayment.application.payment.dto.RecoverProcessingPaymentsResult;
@@ -12,11 +15,15 @@ import com.orderpayment.application.payment.port.out.PaymentApprovalQueryPort;
 import com.orderpayment.application.payment.port.out.PaymentApprovalResult;
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
+import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyHandler;
+import com.orderpayment.application.payment.service.ConfirmPaymentIdempotencyResponseSerializer;
+import com.orderpayment.application.payment.service.ConfirmPaymentRequestHashService;
 import com.orderpayment.application.payment.service.ConfirmPaymentTransactionService;
 import com.orderpayment.application.payment.service.RecoverProcessingPaymentsService;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.Money;
 import com.orderpayment.domain.common.event.DomainEvent;
+import com.orderpayment.domain.idempotency.IdempotencyRecord;
 import com.orderpayment.domain.inventory.Inventory;
 import com.orderpayment.domain.inventory.InventoryReservation;
 import com.orderpayment.domain.inventory.InventoryReservationId;
@@ -53,6 +60,14 @@ class RecoverProcessingPaymentsServiceTest {
     private final FakeInventoryReservationPort inventoryReservationPort = new FakeInventoryReservationPort();
     private final FakePaymentApprovalQueryPort paymentApprovalQueryPort = new FakePaymentApprovalQueryPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
+    private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
+    private final ConfirmPaymentIdempotencyHandler idempotencyHandler = new ConfirmPaymentIdempotencyHandler(
+            idempotencyRecordPort,
+            idempotencyRecordPort,
+            () -> now,
+            new ConfirmPaymentRequestHashService(),
+            new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
+    );
     private final ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
             paymentPort,
             paymentPort,
@@ -61,7 +76,8 @@ class RecoverProcessingPaymentsServiceTest {
             inventoryReservationPort,
             inventoryReservationPort,
             () -> now,
-            eventPublisher
+            eventPublisher,
+            idempotencyHandler
     );
     private final RecoverProcessingPaymentsService service = new RecoverProcessingPaymentsService(
             paymentPort,
@@ -281,6 +297,22 @@ class RecoverProcessingPaymentsServiceTest {
         @Override
         public void publishAll(List<DomainEvent> events) {
             this.events.addAll(events);
+        }
+    }
+
+    private static class FakeIdempotencyRecordPort
+            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
+
+        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
+
+        @Override
+        public Optional<IdempotencyRecord> findByKey(String key) {
+            return Optional.ofNullable(records.get(key));
+        }
+
+        @Override
+        public void save(IdempotencyRecord record) {
+            records.put(record.key(), record);
         }
     }
 }
