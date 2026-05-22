@@ -1,5 +1,6 @@
 package com.orderpayment.api.order;
 
+import com.orderpayment.api.common.RequestTracing;
 import com.orderpayment.application.order.dto.CreateOrderCommand;
 import com.orderpayment.application.order.dto.CreateOrderResult;
 import com.orderpayment.application.order.port.in.CreateOrderUseCase;
@@ -29,8 +30,13 @@ public class OrderController {
     @PostMapping
     public ResponseEntity<CreateOrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest request) {
         CreateOrderResult result = createOrderUseCase.create(request.toCommand());
-        return ResponseEntity.created(URI.create("/v1/orders/" + result.orderId().value()))
-                .body(CreateOrderResponse.from(result));
+        try {
+            RequestTracing.putOrderId(result.orderId().value());
+            return ResponseEntity.created(URI.create("/v1/orders/" + result.orderId().value()))
+                    .body(CreateOrderResponse.from(result));
+        } finally {
+            RequestTracing.removeOrderId();
+        }
     }
 
     public record CreateOrderRequest(@NotEmpty List<@Valid OrderLineRequest> orderLines) {

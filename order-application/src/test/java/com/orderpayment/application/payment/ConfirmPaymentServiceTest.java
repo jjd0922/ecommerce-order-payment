@@ -44,6 +44,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -69,7 +70,11 @@ class ConfirmPaymentServiceTest {
             () -> now,
             eventPublisher
     );
-    private final ConfirmPaymentService service = new ConfirmPaymentService(paymentApprovalPort, transactionService);
+    private final ConfirmPaymentService service = new ConfirmPaymentService(
+            paymentApprovalPort,
+            transactionService,
+            new SimpleMeterRegistry()
+    );
 
     @Test
     @DisplayName("confirm 은 결제를 승인하고 재고 예약을 확정한다")
