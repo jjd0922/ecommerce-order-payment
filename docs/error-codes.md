@@ -16,6 +16,7 @@ API 오류 응답은 RFC 7807 `application/problem+json` 형식을 사용한다.
 | `INVALID_REQUEST` | 400 | 요청 형식 또는 필수 값 오류 | JSON 파싱 실패, 검증 실패, 필수 헤더 누락 |
 | `IDEMPOTENCY_KEY_CONFLICT` | 409 | 같은 멱등키가 다른 요청에 사용됨 | 같은 `Idempotency-Key`로 다른 주문 결제 준비 요청 |
 | `IDEMPOTENCY_IN_FLIGHT` | 409 | 같은 멱등키의 최초 요청 처리 중 | `IN_FLIGHT` 멱등성 레코드가 존재 |
+| `PAYMENT_IN_PROGRESS` | 409 | 결제 승인 요청 처리 중 | 같은 결제가 이미 `PROCESSING` 상태 |
 | `DOMAIN_RULE_VIOLATION` | 409 | 도메인 상태 전이 또는 규칙 위반 | 이미 완료된 결제 상태 전이 요청 |
 | `UNPROCESSABLE_ENTITY` | 422 | 문법은 맞지만 비즈니스 처리가 불가능 | 재고 부족 |
 | `INFRASTRUCTURE_ERROR` | 500 | 인프라 처리 실패 | 직렬화, 외부 시스템, 저장소 처리 실패 |

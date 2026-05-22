@@ -1,197 +1,106 @@
 # ecommerce-order-payment
 
-Spring Boot, JPA, MySQL 기반의 주문-결제(Mock)-재고예약 포트폴리오 프로젝트이다.
+[![CI](https://github.com/jjd0922/ecommerce-order-payment/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jjd0922/ecommerce-order-payment/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/jjd0922/ecommerce-order-payment/branch/main/graph/badge.svg)](https://codecov.io/gh/jjd0922/ecommerce-order-payment)
+[![Java](https://img.shields.io/badge/Java-17-orange)]()
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.5-green)]()
+[![MySQL](https://img.shields.io/badge/MySQL-8.0-blue)]()
 
-단순 CRUD 구현보다 실제 커머스 주문/결제 흐름에서 자주 문제가 되는 정합성, 동시성, 멱등성, 복구성, 추적성을 중심으로 설계한다.
+주문-결제(Mock)-재고예약 흐름에서 정합성, 동시성, 멱등성, 복구성을 다루는 Spring Boot 기반 백엔드 포트폴리오 프로젝트입니다.
 
-## 프로젝트 목표
+상세 흐름, 아키텍처 다이어그램, 오류 코드, 보안 범위, ADR은 [Documents](#documents)를 참고하세요.
 
-- 주문 생성, 결제 준비, 결제 승인/실패, 재고 예약 만료 복구 흐름을 구성한다.
-- 결제 준비 단계에서 재고를 선예약하여 초과 판매를 방지한다.
-- 결제 이탈 또는 실패 시 재고 예약을 해제하고 재고를 복구한다.
-- 실제 PG 연동 대신 Mock 결제를 사용하되, PG 교체가 가능하도록 Port 기반으로 분리한다.
-- 도메인 이벤트와 Outbox 패턴으로 상태 변경을 추적하고 장애 복구 가능성을 확보한다.
-- API 요청 단위 추적을 위해 `X-Request-Id`와 MDC를 연계한다.
+## Highlights
 
-## 기술 스택
+- 결제 준비 단계에서 재고를 선예약하고, MySQL 조건부 update로 초과 판매를 방지
+- 주문에 여러 상품이 포함되어도 `productId` 정렬로 재고 row 락 획득 순서 고정
+- 결제 준비/승인 API에 공용 `idempotency_record` 기반 멱등성 처리 적용
+- 결제 승인 외부 호출은 DB 트랜잭션 밖에서 수행하고, 결과 반영은 짧은 트랜잭션으로 분리
+- payment row 비관적 락으로 같은 결제에 대한 중복 승인 요청 방어
+- Outbox 저장, polling relay, `FAILED` 이벤트 재시도로 이벤트 발행 복구성 확보
+- 재고 예약 만료 스케줄러와 수동 관리자 API로 결제 이탈 재고 복구
+- Testcontainers 기반 MySQL 동시성 통합 테스트와 ArchUnit 계층 의존성 검증
+- `X-Request-Id`, MDC, Actuator/Prometheus endpoint로 요청 추적과 기본 운영 관측성 구성
 
-- Java 17
-- Spring Boot 3.4
-- Spring Web
-- Spring Data JPA
-- MySQL 8.0
-- Gradle Multi-Module
-- Docker Compose
-- JUnit 5
-
-## 모듈 구조
-
-```text
-ecommerce-order-payment
-├── order-api
-├── order-application
-├── order-domain
-├── order-infrastructure
-├── docker
-├── docs
-└── docker-compose.yml
-```
-
-| 모듈 | 책임 |
-| --- | --- |
-| `order-api` | HTTP API, 요청/응답 DTO, 공통 오류 응답, 요청 추적 필터 |
-| `order-application` | UseCase, 트랜잭션 경계, Port 정의, 애플리케이션 서비스 |
-| `order-domain` | 주문, 결제, 상품, 재고, 재고예약 도메인 모델과 상태 전이 규칙 |
-| `order-infrastructure` | JPA Adapter, MySQL Repository, Mock 결제, Outbox 저장/릴레이 |
-
-## 핵심 흐름
-
-```text
-1. 주문 생성
-   -> 상품 조회
-   -> 판매 가능 여부 검증
-   -> 주문 CREATED 생성
-
-2. 결제 준비
-   -> 주문 조회
-   -> Idempotency-Key 기준 기존 결제 조회
-   -> 주문 상품별 재고 선예약
-   -> 주문 PAYMENT_PENDING 전이
-   -> 결제 READY 생성
-   -> 도메인 이벤트 Outbox 저장
-
-3. 결제 승인
-   -> 결제 조회
-   -> Idempotency-Key 검증
-   -> Mock 결제 승인 요청
-   -> 결제 APPROVED 전이
-   -> 주문 PAID 전이
-   -> 재고 예약 CONFIRMED 전이
-   -> 도메인 이벤트 Outbox 저장
-
-4. 결제 실패
-   -> 결제 FAILED 전이
-   -> 주문 FAILED 전이
-   -> 재고 예약 RELEASED 전이
-   -> held 재고를 available 재고로 복구
-
-5. 예약 만료 복구
-   -> 만료된 HELD 예약 조회
-   -> 재고 복구
-   -> 예약 EXPIRED 전이
-   -> 만료 이벤트 Outbox 저장
-```
-
-## 핵심 설계 포인트
-
-| 항목 | 구현 근거 |
-| --- | --- |
-| 정합성 | 주문, 결제, 재고예약 상태 변경을 UseCase 트랜잭션 경계에서 처리 |
-| 동시성 | `available_quantity >= quantity` 조건부 update로 재고 선점 |
-| 멱등성 | 결제 준비/승인 API에서 `Idempotency-Key` 사용 |
-| 복구성 | 재고 예약 만료 복구 스케줄러와 Outbox 이벤트 릴레이 구성 |
-| 추적성 | 도메인 이벤트, Outbox, `X-Request-Id`, MDC 연계 |
-
-## 주요 API
-
-### 주문 생성
-
-```http
-POST /orders
-Content-Type: application/json
-```
-
-```json
-{
-  "orderLines": [
-    {
-      "productId": "11111111",
-      "quantity": 2
-    }
-  ]
-}
-```
-
-### 결제 준비
-
-```http
-POST /payments/prepare
-Content-Type: application/json
-Idempotency-Key: payment-request-1
-```
-
-```json
-{
-  "orderId": "22222222"
-}
-```
-
-### 결제 승인
-
-```http
-POST /payments/{paymentId}/confirm
-Idempotency-Key: payment-request-1
-```
-
-### 재고 예약 만료 수동 실행
-
-```http
-POST /admin/inventory-reservations/expire
-```
-
-## 요청 추적
-
-모든 API 응답에는 `X-Request-Id` 헤더가 포함된다.
-
-- 클라이언트가 `X-Request-Id`를 전달하면 해당 값을 그대로 응답한다.
-- 전달하지 않으면 서버에서 UUID를 생성한다.
-- 요청 처리 중 MDC `requestId`에 저장하여 로그와 요청을 연결한다.
-- 오류 응답에도 `requestId`를 포함한다.
-
-## 로컬 실행
-
-MySQL을 실행한다.
+## Quick Start
 
 ```bash
 docker compose up -d
+./gradlew :order-api:bootRun
 ```
 
-테스트를 실행한다.
+Windows:
+
+```bash
+docker compose up -d
+.\gradlew.bat :order-api:bootRun
+```
+
+```text
+API                  http://localhost:8080
+Health               http://localhost:8080/actuator/health
+Prometheus metrics   http://localhost:8080/actuator/prometheus
+```
+
+## Test
 
 ```bash
 ./gradlew test
 ```
 
-Windows 환경에서는 다음 명령을 사용한다.
+Windows:
 
 ```bash
 .\gradlew.bat test
 ```
 
-애플리케이션을 실행한다.
+테스트는 도메인 규칙, 유스케이스 흐름, API 계약, 요청 추적, 계층 의존성, MySQL 동시성 제어를 검증합니다.
 
-```bash
-./gradlew :order-api:bootRun
+## Tech Stack
+
+| 영역 | 사용 기술 |
+| --- | --- |
+| 언어/런타임 | Java 17 |
+| 프레임워크 | Spring Boot 3.4.5, Spring Web, Spring Data JPA, Validation, Actuator |
+| DB | MySQL 8.0 |
+| 아키텍처 | Gradle Multi-Module, Port 기반 계층 분리 |
+| 관측성 | Micrometer, Prometheus registry, MDC request tracing |
+| 테스트 | JUnit 5, AssertJ, Mockito, Testcontainers, ArchUnit |
+| 로컬 실행 | Docker Compose, Gradle |
+
+## Module
+
+```text
+ecommerce-order-payment
+├── order-api              # HTTP API, 요청/응답 DTO, 오류 응답, 요청 추적
+├── order-application      # UseCase, 트랜잭션 경계, Port 정의
+├── order-domain           # 주문, 결제, 상품, 재고, 재고예약 도메인 규칙
+├── order-infrastructure   # JPA adapter, Mock 결제, Outbox, 스케줄러
+├── docker                 # MySQL schema/seed
+├── docs                   # 설계 문서와 ADR
+└── docker-compose.yml
 ```
 
-Windows 환경에서는 다음 명령을 사용한다.
+## Main API
 
-```bash
-.\gradlew.bat :order-api:bootRun
+```http
+POST /v1/orders
+POST /v1/payments/prepare
+POST /v1/payments/{paymentId}/confirm
+POST /v1/admin/inventory-reservations/expire
 ```
 
-## 테스트
+결제 준비와 결제 승인은 각각 다른 `Idempotency-Key`를 사용합니다. 멱등키는 공용 레코드의 기본 키로 저장되고, 같은 키에 다른 요청 hash가 들어오면 충돌로 거부합니다.
 
-- 주문 생성 UseCase 테스트
-- 결제 준비 UseCase 테스트
-- 결제 승인/실패 UseCase 테스트
-- 재고 예약 만료 복구 테스트
-- API Controller 테스트
-- 요청 추적 필터 테스트
-- 재고 예약 동시성 통합 테스트
+## Documents
 
-재고 예약 동시성 통합 테스트는 로컬 MySQL이 실행 중이면 실제 DB 조건부 update를 검증한다. MySQL에 연결할 수 없으면 JUnit assumption으로 skip된다.
-
-## 상세 문서
-
-- [Notion 상세 문서 초안](https://www.notion.so/357d2aef6d3180f78d8dd7f0ab8a1460)
+- [아키텍처 다이어그램](docs/architecture-diagrams.md)
+- [주문 생성 흐름](docs/order-creation-flow.md)
+- [주문-결제-재고예약 흐름](docs/order-payment-reservation-flow.md)
+- [오류 코드](docs/error-codes.md)
+- [결제 Webhook과 대사 설계](docs/payment-webhook-reconciliation.md)
+- [보안 범위와 결제 신뢰 경계](docs/security-scope.md)
+- [ADR 0001: 조건부 재고 업데이트](docs/adr/0001-conditional-inventory-update.md)
+- [ADR 0002: Outbox 폴링 릴레이](docs/adr/0002-outbox-polling-relay.md)
+- [ADR 0003: Mock 결제 포트](docs/adr/0003-mock-payment-port.md)
+- [ADR 0004: 멱등성 레코드](docs/adr/0004-idempotency-record.md)
