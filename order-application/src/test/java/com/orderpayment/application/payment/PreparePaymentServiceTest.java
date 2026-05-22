@@ -3,8 +3,13 @@ package com.orderpayment.application.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.CurrentTimePort;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
+import com.orderpayment.application.idempotency.IdempotencyInFlightException;
+import com.orderpayment.application.idempotency.IdempotencyRecordAlreadyExistsException;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordCommandPort;
+import com.orderpayment.application.idempotency.port.out.IdempotencyRecordQueryPort;
 import com.orderpayment.application.order.port.out.OrderCommandPort;
 import com.orderpayment.application.order.port.out.OrderQueryPort;
 import com.orderpayment.application.payment.dto.PreparePaymentCommand;
@@ -13,9 +18,11 @@ import com.orderpayment.application.payment.port.out.InventoryReservationCommand
 import com.orderpayment.application.payment.port.out.PaymentCommandPort;
 import com.orderpayment.application.payment.port.out.PaymentQueryPort;
 import com.orderpayment.application.payment.service.PreparePaymentService;
+import com.orderpayment.application.payment.service.PreparePaymentTransactionService;
 import com.orderpayment.domain.common.DomainException;
 import com.orderpayment.domain.common.event.DomainEvent;
 import com.orderpayment.domain.common.Money;
+import com.orderpayment.domain.idempotency.IdempotencyRecord;
 import com.orderpayment.domain.inventory.Inventory;
 import com.orderpayment.domain.inventory.InventoryReservation;
 import com.orderpayment.domain.inventory.InventoryReservationId;
@@ -28,7 +35,11 @@ import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentId;
 import com.orderpayment.domain.payment.PaymentStatus;
 import com.orderpayment.domain.product.ProductId;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,17 +58,21 @@ class PreparePaymentServiceTest {
     private final FakeOrderPort orderPort = new FakeOrderPort();
     private final FakeInventoryReservationPort inventoryReservationPort = new FakeInventoryReservationPort();
     private final FakePaymentPort paymentPort = new FakePaymentPort();
+    private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
     private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
-    private final PreparePaymentService service = new PreparePaymentService(
+    private final PreparePaymentTransactionService transactionService = new PreparePaymentTransactionService(
             orderPort,
             orderPort,
             inventoryReservationPort,
             paymentPort,
-            paymentPort,
             () -> paymentId,
             () -> now,
-            eventPublisher
+            eventPublisher,
+            idempotencyRecordPort,
+            idempotencyRecordPort,
+            new ObjectMapper()
     );
+    private final PreparePaymentService service = new PreparePaymentService(transactionService);
 
     @Test
     @DisplayName("prepare 는 결제를 준비하고 재고를 보류한다")
@@ -94,6 +109,45 @@ class PreparePaymentServiceTest {
     }
 
     @Test
+    @DisplayName("prepare returns existing result when idempotency record insert conflicts")
+    void prepare_whenIdempotencyRecordAlreadyExists_thenReplayExistingResult() {
+        orderPort.saveOrder(order());
+        inventoryReservationPort.save(Inventory.of(productId, 5));
+        idempotencyRecordPort.failNextSaveWithExistingRecord(completedRecord(
+                "payment-request-1",
+                orderId,
+                paymentId
+        ));
+
+        PreparePaymentResult result = service.prepare(command(orderId, "payment-request-1"));
+
+        assertThat(result.paymentId()).isEqualTo(paymentId);
+        assertThat(result.orderId()).isEqualTo(orderId);
+        assertThat(result.amount()).isEqualTo(Money.won(2000));
+        assertThat(paymentPort.saveCount()).isZero();
+        assertThat(inventoryReservationPort.reservations).isEmpty();
+        assertThat(eventPublisher.events).isEmpty();
+    }
+
+    @Test
+    @DisplayName("prepare throws when same idempotency key is in flight")
+    void prepare_whenSameIdempotencyKeyIsInFlight_thenThrowException() {
+        orderPort.saveOrder(order());
+        inventoryReservationPort.save(Inventory.of(productId, 5));
+        idempotencyRecordPort.save(IdempotencyRecord.inFlight(
+                "payment-request-1",
+                requestHash(orderId),
+                now,
+                now.plusDays(1)
+        ));
+
+        assertThatThrownBy(() -> service.prepare(command(orderId, "payment-request-1")))
+                .isInstanceOf(IdempotencyInFlightException.class);
+        assertThat(paymentPort.saveCount()).isZero();
+        assertThat(inventoryReservationPort.reservations).isEmpty();
+    }
+
+    @Test
     @DisplayName("prepare 는 같은 멱등키로 다른 주문을 요청하면 예외를 던진다")
     void prepare_whenSameIdempotencyKeyUsedForDifferentOrder_thenThrowException() {
         orderPort.saveOrder(order());
@@ -127,6 +181,29 @@ class PreparePaymentServiceTest {
 
     private static PreparePaymentCommand command(OrderId orderId, String idempotencyKey) {
         return new PreparePaymentCommand(orderId, new IdempotencyKey(idempotencyKey));
+    }
+
+    private static IdempotencyRecord completedRecord(String key, OrderId orderId, PaymentId paymentId) {
+        IdempotencyRecord record = IdempotencyRecord.inFlight(
+                key,
+                requestHash(orderId),
+                LocalDateTime.of(2026, 5, 3, 21, 0),
+                LocalDateTime.of(2026, 5, 4, 21, 0)
+        );
+        record.complete("""
+                {"paymentId":"%s","orderId":"%s","amount":2000.00,"orderStatus":"PAYMENT_PENDING","paymentStatus":"READY"}
+                """.formatted(paymentId.value(), orderId.value()).trim());
+        return record;
+    }
+
+    private static String requestHash(OrderId orderId) {
+        String rawRequest = "prepare-payment:" + orderId.value();
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(rawRequest.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     private static class FakeOrderPort implements OrderQueryPort, OrderCommandPort {
@@ -225,6 +302,33 @@ class PreparePaymentServiceTest {
 
         int saveCount() {
             return saveCount.get();
+        }
+    }
+
+    private static class FakeIdempotencyRecordPort
+            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
+
+        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
+        private IdempotencyRecord existingRecordOnNextSave;
+
+        @Override
+        public Optional<IdempotencyRecord> findByKey(String key) {
+            return Optional.ofNullable(records.get(key));
+        }
+
+        @Override
+        public void save(IdempotencyRecord record) {
+            if (existingRecordOnNextSave != null) {
+                IdempotencyRecord existingRecord = existingRecordOnNextSave;
+                existingRecordOnNextSave = null;
+                records.put(existingRecord.key(), existingRecord);
+                throw new IdempotencyRecordAlreadyExistsException("idempotency record already exists", null);
+            }
+            records.put(record.key(), record);
+        }
+
+        void failNextSaveWithExistingRecord(IdempotencyRecord record) {
+            existingRecordOnNextSave = record;
         }
     }
 
