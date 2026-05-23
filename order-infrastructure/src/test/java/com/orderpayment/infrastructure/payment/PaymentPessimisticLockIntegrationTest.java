@@ -1,6 +1,11 @@
 package com.orderpayment.infrastructure.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.CurrentTimePort;
@@ -104,7 +109,7 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
     private ConfirmPaymentService service;
 
     @Autowired
-    private BlockingPaymentApprovalPort approvalPort;
+    private BlockingApprovalProbe approvalProbe;
 
     @DynamicPropertySource
     static void registerProperties(DynamicPropertyRegistry registry) {
@@ -124,7 +129,7 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
     }
 
     @Test
-    @DisplayName("same payment confirm requests use pessimistic lock and approve once")
+    @DisplayName("같은 결제 승인 요청은 비관락으로 직렬화되어 한 번만 승인된다")
     void confirm_whenSamePaymentRequestedConcurrently_thenApproveOnlyOnce() throws Exception {
         int requestCount = 2;
         ExecutorService executorService = Executors.newFixedThreadPool(requestCount);
@@ -141,13 +146,13 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
 
         assertThat(readyLatch.await(5, TimeUnit.SECONDS)).isTrue();
         startLatch.countDown();
-        assertThat(approvalPort.awaitApprovalStarted()).isTrue();
-        approvalPort.releaseApproval();
+        assertThat(approvalProbe.awaitApprovalStarted()).isTrue();
+        approvalProbe.releaseApproval();
         executorService.shutdown();
         assertThat(executorService.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
 
         Payment payment = paymentAdapter.getPayment(paymentId);
-        assertThat(approvalPort.approveCount()).isEqualTo(1);
+        assertThat(approvalProbe.approveCount()).isEqualTo(1);
         assertThat(payment.status()).isEqualTo(PaymentStatus.APPROVED);
         assertThat(orderAdapter.getOrder(orderId).status()).isEqualTo(OrderStatus.PAID);
         assertThat(inventoryReservationJpaRepository.findByOrderIdAndStatus(
@@ -263,17 +268,37 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
         }
 
         @Bean
-        FakeIdempotencyRecordPort fakeIdempotencyRecordPort() {
-            return new FakeIdempotencyRecordPort();
+        Map<String, IdempotencyRecord> idempotencyRecords() {
+            return new ConcurrentHashMap<>();
+        }
+
+        @Bean
+        IdempotencyRecordQueryPort idempotencyRecordQueryPort(Map<String, IdempotencyRecord> idempotencyRecords) {
+            IdempotencyRecordQueryPort port = mock(IdempotencyRecordQueryPort.class);
+            when(port.findByKey(anyString()))
+                    .thenAnswer(invocation -> Optional.ofNullable(idempotencyRecords.get(invocation.getArgument(0))));
+            return port;
+        }
+
+        @Bean
+        IdempotencyRecordCommandPort idempotencyRecordCommandPort(Map<String, IdempotencyRecord> idempotencyRecords) {
+            IdempotencyRecordCommandPort port = mock(IdempotencyRecordCommandPort.class);
+            doAnswer(invocation -> {
+                IdempotencyRecord record = invocation.getArgument(0);
+                idempotencyRecords.put(record.key(), record);
+                return null;
+            }).when(port).save(any(IdempotencyRecord.class));
+            return port;
         }
 
         @Bean
         ConfirmPaymentIdempotencyHandler confirmPaymentIdempotencyHandler(
-                FakeIdempotencyRecordPort idempotencyRecordPort
+                IdempotencyRecordQueryPort idempotencyRecordQueryPort,
+                IdempotencyRecordCommandPort idempotencyRecordCommandPort
         ) {
             return new ConfirmPaymentIdempotencyHandler(
-                    idempotencyRecordPort,
-                    idempotencyRecordPort,
+                    idempotencyRecordQueryPort,
+                    idempotencyRecordCommandPort,
                     fixedTimePort(),
                     new ConfirmPaymentRequestHashService(),
                     new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
@@ -302,13 +327,23 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
         }
 
         @Bean
-        BlockingPaymentApprovalPort blockingPaymentApprovalPort() {
-            return new BlockingPaymentApprovalPort();
+        BlockingApprovalProbe blockingApprovalProbe() {
+            return new BlockingApprovalProbe();
+        }
+
+        @Bean
+        PaymentApprovalPort paymentApprovalPort(BlockingApprovalProbe probe) {
+            PaymentApprovalPort port = mock(PaymentApprovalPort.class);
+            when(port.approve(any(Payment.class))).thenAnswer(invocation -> {
+                Payment payment = invocation.getArgument(0);
+                return probe.approve(payment);
+            });
+            return port;
         }
 
         @Bean
         ConfirmPaymentService confirmPaymentService(
-                BlockingPaymentApprovalPort approvalPort,
+                PaymentApprovalPort approvalPort,
                 ConfirmPaymentTransactionService transactionService
         ) {
             return new ConfirmPaymentService(
@@ -319,14 +354,13 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
         }
     }
 
-    private static class BlockingPaymentApprovalPort implements PaymentApprovalPort {
+    private static class BlockingApprovalProbe {
 
         private final AtomicInteger approveCount = new AtomicInteger();
         private final CountDownLatch approvalStartedLatch = new CountDownLatch(1);
         private final CountDownLatch releaseApprovalLatch = new CountDownLatch(1);
 
-        @Override
-        public PaymentApprovalResult approve(Payment payment) {
+        private PaymentApprovalResult approve(Payment payment) {
             approveCount.incrementAndGet();
             approvalStartedLatch.countDown();
             await(releaseApprovalLatch);
@@ -343,22 +377,6 @@ class PaymentPessimisticLockIntegrationTest extends MysqlContainerTestSupport {
 
         int approveCount() {
             return approveCount.get();
-        }
-    }
-
-    private static class FakeIdempotencyRecordPort
-            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
-
-        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
-
-        @Override
-        public Optional<IdempotencyRecord> findByKey(String key) {
-            return Optional.ofNullable(records.get(key));
-        }
-
-        @Override
-        public void save(IdempotencyRecord record) {
-            records.put(record.key(), record);
         }
     }
 }
