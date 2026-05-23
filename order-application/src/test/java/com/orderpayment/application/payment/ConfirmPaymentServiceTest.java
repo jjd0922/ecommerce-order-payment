@@ -2,6 +2,12 @@ package com.orderpayment.application.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
@@ -40,22 +46,30 @@ import com.orderpayment.domain.payment.Payment;
 import com.orderpayment.domain.payment.PaymentId;
 import com.orderpayment.domain.payment.PaymentStatus;
 import com.orderpayment.domain.product.ProductId;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class ConfirmPaymentServiceTest {
 
     private final LocalDateTime now = LocalDateTime.of(2026, 5, 4, 10, 0);
@@ -63,84 +77,127 @@ class ConfirmPaymentServiceTest {
     private final OrderId orderId = OrderId.newId();
     private final PaymentId paymentId = new PaymentId(UUID.fromString("00000000-0000-0000-0000-000000000301"));
     private final IdempotencyKey idempotencyKey = new IdempotencyKey("payment-request-1");
-    private final FakeOrderPort orderPort = new FakeOrderPort();
-    private final FakeInventoryReservationPort inventoryReservationPort = new FakeInventoryReservationPort();
-    private final FakePaymentPort paymentPort = new FakePaymentPort();
-    private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
-    private final FakePaymentApprovalPort paymentApprovalPort = new FakePaymentApprovalPort();
-    private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
-    private final ConfirmPaymentRequestHashService requestHashService = new ConfirmPaymentRequestHashService();
-    private final ConfirmPaymentIdempotencyResponseSerializer responseSerializer =
-            new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper());
-    private final ConfirmPaymentIdempotencyHandler idempotencyHandler = new ConfirmPaymentIdempotencyHandler(
-            idempotencyRecordPort,
-            idempotencyRecordPort,
-            () -> now,
-            requestHashService,
-            responseSerializer
-    );
-    private final ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
-            paymentPort,
-            paymentPort,
-            orderPort,
-            orderPort,
-            inventoryReservationPort,
-            inventoryReservationPort,
-            () -> now,
-            eventPublisher,
-            idempotencyHandler
-    );
-    private final ConfirmPaymentService service = new ConfirmPaymentService(
-            paymentApprovalPort,
-            transactionService,
-            new SimpleMeterRegistry()
-    );
+    private final Map<OrderId, Order> orders = new LinkedHashMap<>();
+    private final Map<PaymentId, Payment> payments = new LinkedHashMap<>();
+    private final Map<String, IdempotencyRecord> idempotencyRecords = new LinkedHashMap<>();
+    private final Map<ProductId, Inventory> inventories = new LinkedHashMap<>();
+    private final List<InventoryReservation> reservations = new ArrayList<>();
+    private final List<DomainEvent> publishedEvents = new ArrayList<>();
+    private final AtomicInteger forUpdateReadCount = new AtomicInteger();
+
+    @Mock
+    private OrderQueryPort orderQueryPort;
+
+    @Mock
+    private OrderCommandPort orderCommandPort;
+
+    @Mock
+    private PaymentQueryPort paymentQueryPort;
+
+    @Mock
+    private PaymentCommandPort paymentCommandPort;
+
+    @Mock
+    private InventoryReservationQueryPort inventoryReservationQueryPort;
+
+    @Mock
+    private InventoryReservationCommandPort inventoryReservationCommandPort;
+
+    @Mock
+    private IdempotencyRecordQueryPort idempotencyRecordQueryPort;
+
+    @Mock
+    private IdempotencyRecordCommandPort idempotencyRecordCommandPort;
+
+    @Mock
+    private PaymentApprovalPort paymentApprovalPort;
+
+    @Mock
+    private DomainEventPublisherPort eventPublisher;
+
+    private ConfirmPaymentRequestHashService requestHashService;
+    private ConfirmPaymentIdempotencyResponseSerializer responseSerializer;
+    private ConfirmPaymentService service;
+
+    @BeforeEach
+    void setUp() {
+        requestHashService = new ConfirmPaymentRequestHashService();
+        responseSerializer = new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper());
+        ConfirmPaymentIdempotencyHandler idempotencyHandler = new ConfirmPaymentIdempotencyHandler(
+                idempotencyRecordQueryPort,
+                idempotencyRecordCommandPort,
+                () -> now,
+                requestHashService,
+                responseSerializer
+        );
+        ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
+                paymentQueryPort,
+                paymentCommandPort,
+                orderQueryPort,
+                orderCommandPort,
+                inventoryReservationQueryPort,
+                inventoryReservationCommandPort,
+                () -> now,
+                eventPublisher,
+                idempotencyHandler
+        );
+        service = new ConfirmPaymentService(paymentApprovalPort, transactionService, new SimpleMeterRegistry());
+        stubStatefulPorts();
+    }
 
     @Test
     @DisplayName("confirm 은 결제를 승인하고 재고 예약을 확정한다")
     void confirm_whenApprovalSucceeds_thenApprovePaymentAndConfirmReservation() {
         givenPreparedPayment();
-        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
+        saveInventory(Inventory.restore(productId, 3, 2));
+        when(paymentApprovalPort.approve(any(Payment.class)))
+                .thenAnswer(invocation -> PaymentApprovalResult.approved("mock-pg-" + invocation.<Payment>getArgument(0).id().value()));
 
         ConfirmPaymentResult result = service.confirm(command());
 
         assertThat(result.paymentId()).isEqualTo(paymentId);
         assertThat(result.orderStatus()).isEqualTo(OrderStatus.PAID);
         assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.APPROVED);
-        assertThat(inventoryReservationPort.inventory(productId).heldQuantity()).isZero();
-        assertThat(inventoryReservationPort.firstReservation().status())
-                .isEqualTo(InventoryReservationStatus.CONFIRMED);
-        assertThat(eventPublisher.events).hasSize(2);
+        assertThat(inventories.get(productId).heldQuantity()).isZero();
+        assertThat(firstReservation().status()).isEqualTo(InventoryReservationStatus.CONFIRMED);
+        assertThat(publishedEvents).hasSize(2);
     }
 
     @Test
     @DisplayName("confirm 은 이미 승인된 결제이면 기존 결과를 반환한다")
     void confirm_whenPaymentAlreadyApproved_thenReturnExistingResult() {
         givenPreparedPayment();
-        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
+        saveInventory(Inventory.restore(productId, 3, 2));
+        when(paymentApprovalPort.approve(any(Payment.class)))
+                .thenAnswer(invocation -> PaymentApprovalResult.approved("mock-pg-" + invocation.<Payment>getArgument(0).id().value()));
 
         ConfirmPaymentResult firstResult = service.confirm(command());
         ConfirmPaymentResult secondResult = service.confirm(command());
 
         assertThat(secondResult).isEqualTo(firstResult);
-        assertThat(paymentApprovalPort.approveCount()).isEqualTo(1);
-        assertThat(paymentPort.saveCount()).isEqualTo(2);
-        assertThat(eventPublisher.events).hasSize(2);
+        verify(paymentApprovalPort, times(1)).approve(any(Payment.class));
+        verify(paymentCommandPort, times(2)).savePayment(any(Payment.class));
+        assertThat(publishedEvents).hasSize(2);
     }
 
     @Test
-    @DisplayName("confirm calls payment approval only once for duplicate concurrent requests")
+    @DisplayName("confirm 은 중복 동시 요청에서도 PG 승인을 한 번만 호출한다")
     void confirm_whenDuplicateConcurrentRequests_thenApproveOnlyOnce() throws Exception {
         givenPreparedPayment();
-        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
+        saveInventory(Inventory.restore(productId, 3, 2));
+        CountDownLatch approvalStartedLatch = new CountDownLatch(1);
+        CountDownLatch releaseApprovalLatch = new CountDownLatch(1);
+        when(paymentApprovalPort.approve(any(Payment.class))).thenAnswer(invocation -> {
+            Payment payment = invocation.getArgument(0);
+            approvalStartedLatch.countDown();
+            await(releaseApprovalLatch);
+            return PaymentApprovalResult.approved("mock-pg-" + payment.id().value());
+        });
+
         int requestCount = 2;
         ExecutorService executorService = Executors.newFixedThreadPool(requestCount);
         CountDownLatch readyLatch = new CountDownLatch(requestCount);
         CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch approvalStartedLatch = new CountDownLatch(1);
-        CountDownLatch releaseApprovalLatch = new CountDownLatch(1);
-        paymentApprovalPort.blockApproval(approvalStartedLatch, releaseApprovalLatch);
-
         for (int i = 0; i < requestCount; i++) {
             executorService.submit(() -> {
                 readyLatch.countDown();
@@ -157,73 +214,74 @@ class ConfirmPaymentServiceTest {
         executorService.shutdown();
         assertThat(executorService.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
 
-        assertThat(paymentApprovalPort.approveCount()).isEqualTo(1);
-        assertThat(paymentPort.saveCount()).isEqualTo(2);
-        assertThat(paymentPort.getPayment(paymentId).status()).isEqualTo(PaymentStatus.APPROVED);
-        assertThat(orderPort.getOrder(orderId).status()).isEqualTo(OrderStatus.PAID);
-        assertThat(inventoryReservationPort.firstReservation().status())
-                .isEqualTo(InventoryReservationStatus.CONFIRMED);
-        assertThat(eventPublisher.events).hasSize(2);
+        verify(paymentApprovalPort, times(1)).approve(any(Payment.class));
+        verify(paymentCommandPort, times(2)).savePayment(any(Payment.class));
+        assertThat(payments.get(paymentId).status()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(orders.get(orderId).status()).isEqualTo(OrderStatus.PAID);
+        assertThat(firstReservation().status()).isEqualTo(InventoryReservationStatus.CONFIRMED);
+        assertThat(publishedEvents).hasSize(2);
     }
 
     @Test
     @DisplayName("confirm 은 결제 승인 실패 시 결제를 실패 처리하고 재고 예약을 해제한다")
     void confirm_whenApprovalFails_thenFailPaymentAndReleaseReservation() {
         givenPreparedPayment();
-        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
-        paymentApprovalPort.failNext("mock approval failed");
+        saveInventory(Inventory.restore(productId, 3, 2));
+        when(paymentApprovalPort.approve(any(Payment.class)))
+                .thenReturn(PaymentApprovalResult.failed("mock-pg-" + paymentId.value(), "mock approval failed"));
 
         ConfirmPaymentResult result = service.confirm(command());
 
         assertThat(result.orderStatus()).isEqualTo(OrderStatus.FAILED);
         assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(inventoryReservationPort.inventory(productId).availableQuantity()).isEqualTo(5);
-        assertThat(inventoryReservationPort.inventory(productId).heldQuantity()).isZero();
-        assertThat(inventoryReservationPort.firstReservation().status())
-                .isEqualTo(InventoryReservationStatus.RELEASED);
-        assertThat(eventPublisher.events).hasSize(2);
+        assertThat(inventories.get(productId).availableQuantity()).isEqualTo(5);
+        assertThat(inventories.get(productId).heldQuantity()).isZero();
+        assertThat(firstReservation().status()).isEqualTo(InventoryReservationStatus.RELEASED);
+        assertThat(publishedEvents).hasSize(2);
     }
 
     @Test
-    @DisplayName("confirm accepts idempotency key independent from prepare key")
+    @DisplayName("confirm 은 결제 준비 멱등키와 다른 승인 멱등키도 허용한다")
     void confirm_whenConfirmIdempotencyKeyDiffersFromPrepareKey_thenApprovePayment() {
         givenPreparedPayment();
-        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
+        saveInventory(Inventory.restore(productId, 3, 2));
+        when(paymentApprovalPort.approve(any(Payment.class)))
+                .thenAnswer(invocation -> PaymentApprovalResult.approved("mock-pg-" + invocation.<Payment>getArgument(0).id().value()));
 
         ConfirmPaymentResult result = service.confirm(new ConfirmPaymentCommand(paymentId, new IdempotencyKey("another-key")));
 
         assertThat(result.paymentStatus()).isEqualTo(PaymentStatus.APPROVED);
-        assertThat(paymentApprovalPort.approveCount()).isEqualTo(1);
+        verify(paymentApprovalPort).approve(any(Payment.class));
     }
 
     @Test
-    @DisplayName("confirm throws when payment is already processing")
+    @DisplayName("confirm 은 결제가 이미 처리 중이면 예외를 던진다")
     void confirm_whenPaymentAlreadyProcessing_thenThrowException() {
         givenPreparedPayment();
-        Payment payment = paymentPort.getPayment(paymentId);
+        Payment payment = payments.get(paymentId);
         payment.startApproval(now.minusMinutes(1));
-        paymentPort.savePaymentWithoutCounting(payment);
+        savePayment(payment);
 
         assertThatThrownBy(() -> service.confirm(command()))
                 .isInstanceOf(PaymentInProgressException.class);
-        assertThat(paymentApprovalPort.approveCount()).isZero();
+        verify(paymentApprovalPort, times(0)).approve(any(Payment.class));
     }
 
     @Test
-    @DisplayName("confirm throws when payment is cancelled")
+    @DisplayName("confirm 은 취소된 결제이면 예외를 던진다")
     void confirm_whenPaymentCancelled_thenThrowException() {
         givenPreparedPayment();
-        Payment payment = paymentPort.getPayment(paymentId);
+        Payment payment = payments.get(paymentId);
         payment.cancel();
-        paymentPort.savePaymentWithoutCounting(payment);
+        savePayment(payment);
 
         assertThatThrownBy(() -> service.confirm(command()))
                 .isInstanceOf(DomainException.class);
-        assertThat(paymentApprovalPort.approveCount()).isZero();
+        verify(paymentApprovalPort, times(0)).approve(any(Payment.class));
     }
 
     @Test
-    @DisplayName("confirm replays completed response for same idempotency key and payment id")
+    @DisplayName("confirm 은 같은 멱등키와 결제 ID의 완료 응답을 재현한다")
     void confirm_whenCompletedIdempotencyRecordExists_thenReplayResponse() {
         givenPreparedPayment();
         ConfirmPaymentResult completedResult = new ConfirmPaymentResult(
@@ -233,17 +291,17 @@ class ConfirmPaymentServiceTest {
                 OrderStatus.PAID,
                 PaymentStatus.APPROVED
         );
-        idempotencyRecordPort.save(completedRecord(command(), completedResult));
+        idempotencyRecords.put(command().idempotencyKey().value(), completedRecord(command(), completedResult));
 
         ConfirmPaymentResult result = service.confirm(command());
 
         assertThat(result).isEqualTo(completedResult);
-        assertThat(paymentApprovalPort.approveCount()).isZero();
-        assertThat(paymentPort.getPayment(paymentId).status()).isEqualTo(PaymentStatus.READY);
+        verify(paymentApprovalPort, times(0)).approve(any(Payment.class));
+        assertThat(payments.get(paymentId).status()).isEqualTo(PaymentStatus.READY);
     }
 
     @Test
-    @DisplayName("confirm rejects same idempotency key for different payment id")
+    @DisplayName("confirm 은 같은 멱등키로 다른 결제를 요청하면 충돌 예외를 던진다")
     void confirm_whenSameIdempotencyKeyUsedForDifferentPayment_thenThrowConflict() {
         givenPreparedPayment();
         PaymentId anotherPaymentId = PaymentId.newId();
@@ -255,11 +313,60 @@ class ConfirmPaymentServiceTest {
                 OrderStatus.PAID,
                 PaymentStatus.APPROVED
         );
-        idempotencyRecordPort.save(completedRecord(firstCommand, completedResult));
+        idempotencyRecords.put(idempotencyKey.value(), completedRecord(firstCommand, completedResult));
 
         assertThatThrownBy(() -> service.confirm(command()))
                 .isInstanceOf(IdempotencyKeyConflictException.class);
-        assertThat(paymentApprovalPort.approveCount()).isZero();
+        verify(paymentApprovalPort, times(0)).approve(any(Payment.class));
+    }
+
+    private void stubStatefulPorts() {
+        when(idempotencyRecordQueryPort.findByKey(anyString()))
+                .thenAnswer(invocation -> Optional.ofNullable(idempotencyRecords.get(invocation.getArgument(0))));
+        doAnswer(invocation -> {
+            IdempotencyRecord record = invocation.getArgument(0);
+            idempotencyRecords.put(record.key(), record);
+            return null;
+        }).when(idempotencyRecordCommandPort).save(any(IdempotencyRecord.class));
+        when(paymentQueryPort.getPaymentForUpdate(any(PaymentId.class))).thenAnswer(invocation -> {
+            PaymentId id = invocation.getArgument(0);
+            if (forUpdateReadCount.incrementAndGet() > 1) {
+                awaitUntilPaymentStatusChangesFromReady(id);
+            }
+            return payment(id);
+        });
+        when(paymentQueryPort.getPayment(any(PaymentId.class))).thenAnswer(invocation -> payment(invocation.getArgument(0)));
+        when(orderQueryPort.getOrder(any(OrderId.class))).thenAnswer(invocation -> order(invocation.getArgument(0)));
+        doAnswer(invocation -> {
+            savePayment(invocation.getArgument(0));
+            return null;
+        }).when(paymentCommandPort).savePayment(any(Payment.class));
+        doAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            orders.put(order.id(), order);
+            return null;
+        }).when(orderCommandPort).saveOrder(any(Order.class));
+        when(inventoryReservationQueryPort.findHeldReservationsByOrderId(any(OrderId.class))).thenAnswer(invocation -> {
+            OrderId orderId = invocation.getArgument(0);
+            return reservations.stream()
+                    .filter(reservation -> reservation.orderId().equals(orderId))
+                    .filter(reservation -> reservation.status() == InventoryReservationStatus.HELD)
+                    .toList();
+        });
+        doAnswer(invocation -> {
+            invocation.<List<InventoryReservation>>getArgument(0)
+                    .forEach(reservation -> inventories.get(reservation.productId()).confirm(reservation.quantity()));
+            return null;
+        }).when(inventoryReservationCommandPort).confirmAll(any());
+        doAnswer(invocation -> {
+            invocation.<List<InventoryReservation>>getArgument(0)
+                    .forEach(reservation -> inventories.get(reservation.productId()).release(reservation.quantity()));
+            return null;
+        }).when(inventoryReservationCommandPort).releaseAll(any());
+        doAnswer(invocation -> {
+            publishedEvents.addAll(invocation.getArgument(0));
+            return null;
+        }).when(eventPublisher).publishAll(any());
     }
 
     private void givenPreparedPayment() {
@@ -267,23 +374,41 @@ class ConfirmPaymentServiceTest {
                 OrderItem.of(productId, "keyboard", Money.won(1000), 2)
         ));
         order.requestPayment();
-        orderPort.saveOrder(order);
-
-        Payment payment = Payment.ready(paymentId, orderId, Money.won(2000), idempotencyKey);
-        paymentPort.savePaymentWithoutCounting(payment);
-
-        InventoryReservation reservation = InventoryReservation.hold(
+        orders.put(orderId, order);
+        savePayment(Payment.ready(paymentId, orderId, Money.won(2000), idempotencyKey));
+        reservations.add(InventoryReservation.hold(
                 InventoryReservationId.newId(),
                 orderId,
                 productId,
                 2,
                 now.plusMinutes(10)
-        );
-        inventoryReservationPort.saveReservation(reservation);
+        ));
     }
 
     private ConfirmPaymentCommand command() {
         return new ConfirmPaymentCommand(paymentId, idempotencyKey);
+    }
+
+    private Payment payment(PaymentId paymentId) {
+        return Optional.ofNullable(payments.get(paymentId))
+                .orElseThrow(() -> new DomainException("payment not found"));
+    }
+
+    private Order order(OrderId orderId) {
+        return Optional.ofNullable(orders.get(orderId))
+                .orElseThrow(() -> new DomainException("order not found"));
+    }
+
+    private void savePayment(Payment payment) {
+        payments.put(payment.id(), payment);
+    }
+
+    private void saveInventory(Inventory inventory) {
+        inventories.put(inventory.productId(), inventory);
+    }
+
+    private InventoryReservation firstReservation() {
+        return reservations.get(0);
     }
 
     private IdempotencyRecord completedRecord(ConfirmPaymentCommand command, ConfirmPaymentResult result) {
@@ -300,12 +425,23 @@ class ConfirmPaymentServiceTest {
     private void awaitUntilPaymentProcessing() {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline) {
-            if (paymentPort.getPayment(paymentId).status() == PaymentStatus.PROCESSING) {
+            if (payments.get(paymentId).status() == PaymentStatus.PROCESSING) {
                 return;
             }
             Thread.yield();
         }
         throw new AssertionError("payment did not enter PROCESSING status");
+    }
+
+    private void awaitUntilPaymentStatusChangesFromReady(PaymentId paymentId) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (payments.get(paymentId).status() != PaymentStatus.READY) {
+                return;
+            }
+            Thread.yield();
+        }
+        throw new AssertionError("payment row lock was not released");
     }
 
     private static void await(CountDownLatch latch) {
@@ -314,214 +450,6 @@ class ConfirmPaymentServiceTest {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(exception);
-        }
-    }
-
-    private static class FakeOrderPort implements OrderQueryPort, OrderCommandPort {
-
-        private final Map<OrderId, Order> orders = new ConcurrentHashMap<>();
-
-        @Override
-        public Order getOrder(OrderId orderId) {
-            Order order = orders.get(orderId);
-            if (order == null) {
-                throw new DomainException("order not found");
-            }
-            return order;
-        }
-
-        @Override
-        public void saveOrder(Order order) {
-            orders.put(order.id(), order);
-        }
-    }
-
-    private static class FakePaymentPort implements PaymentQueryPort, PaymentCommandPort {
-
-        private final Map<PaymentId, Payment> paymentsById = new ConcurrentHashMap<>();
-        private final Map<IdempotencyKey, Payment> paymentsByKey = new ConcurrentHashMap<>();
-        private final AtomicInteger saveCount = new AtomicInteger();
-        private final AtomicInteger forUpdateReadCount = new AtomicInteger();
-
-        @Override
-        public Payment getPayment(PaymentId paymentId) {
-            Payment payment = paymentsById.get(paymentId);
-            if (payment == null) {
-                throw new DomainException("payment not found");
-            }
-            return payment;
-        }
-
-        @Override
-        public Payment getPaymentForUpdate(PaymentId paymentId) {
-            int readCount = forUpdateReadCount.incrementAndGet();
-            if (readCount > 1) {
-                awaitUntilPaymentStatusChangesFromReady(paymentId);
-            }
-            return getPayment(paymentId);
-        }
-
-        @Override
-        public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
-            return Optional.ofNullable(paymentsByKey.get(idempotencyKey));
-        }
-
-        @Override
-        public List<Payment> findProcessingPaymentsRequestedBefore(LocalDateTime requestedBefore, int limit) {
-            return paymentsById.values().stream()
-                    .filter(payment -> payment.status() == PaymentStatus.PROCESSING)
-                    .filter(payment -> payment.approvalRequestedAt() != null)
-                    .filter(payment -> payment.approvalRequestedAt().isBefore(requestedBefore))
-                    .limit(limit)
-                    .toList();
-        }
-
-        @Override
-        public void savePayment(Payment payment) {
-            savePaymentWithoutCounting(payment);
-            saveCount.incrementAndGet();
-        }
-
-        void savePaymentWithoutCounting(Payment payment) {
-            paymentsById.put(payment.id(), payment);
-            paymentsByKey.put(payment.idempotencyKey(), payment);
-        }
-
-        int saveCount() {
-            return saveCount.get();
-        }
-
-        private void awaitUntilPaymentStatusChangesFromReady(PaymentId paymentId) {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (System.nanoTime() < deadline) {
-                if (getPayment(paymentId).status() != PaymentStatus.READY) {
-                    return;
-                }
-                Thread.yield();
-            }
-            throw new AssertionError("payment row lock was not released");
-        }
-    }
-
-    private static class FakeInventoryReservationPort
-            implements InventoryReservationQueryPort, InventoryReservationCommandPort {
-
-        private final Map<ProductId, Inventory> inventories = new ConcurrentHashMap<>();
-        private final Map<InventoryReservationId, InventoryReservation> reservations = new ConcurrentHashMap<>();
-
-        @Override
-        public InventoryReservation hold(OrderId orderId, ProductId productId, int quantity, LocalDateTime expiresAt) {
-            Inventory inventory = inventories.get(productId);
-            inventory.hold(quantity);
-            InventoryReservation reservation = InventoryReservation.hold(
-                    InventoryReservationId.newId(),
-                    orderId,
-                    productId,
-                    quantity,
-                    expiresAt
-            );
-            saveReservation(reservation);
-            return reservation;
-        }
-
-        @Override
-        public List<InventoryReservation> findHeldReservationsByOrderId(OrderId orderId) {
-            return reservations.values().stream()
-                    .filter(reservation -> reservation.orderId().equals(orderId))
-                    .filter(reservation -> reservation.status() == InventoryReservationStatus.HELD)
-                    .toList();
-        }
-
-        @Override
-        public void confirmAll(List<InventoryReservation> reservations) {
-            for (InventoryReservation reservation : reservations) {
-                Inventory inventory = inventories.get(reservation.productId());
-                inventory.confirm(reservation.quantity());
-            }
-        }
-
-        @Override
-        public void releaseAll(List<InventoryReservation> reservations) {
-            for (InventoryReservation reservation : reservations) {
-                Inventory inventory = inventories.get(reservation.productId());
-                inventory.release(reservation.quantity());
-            }
-        }
-
-        void saveInventory(Inventory inventory) {
-            inventories.put(inventory.productId(), inventory);
-        }
-
-        void saveReservation(InventoryReservation reservation) {
-            reservations.put(reservation.id(), reservation);
-        }
-
-        Inventory inventory(ProductId productId) {
-            return inventories.get(productId);
-        }
-
-        InventoryReservation firstReservation() {
-            return reservations.values().iterator().next();
-        }
-    }
-
-    private static class FakePaymentApprovalPort implements PaymentApprovalPort {
-
-        private final AtomicInteger approveCount = new AtomicInteger();
-        private String failureReason;
-        private CountDownLatch approvalStartedLatch;
-        private CountDownLatch releaseApprovalLatch;
-
-        @Override
-        public PaymentApprovalResult approve(Payment payment) {
-            approveCount.incrementAndGet();
-            if (approvalStartedLatch != null && releaseApprovalLatch != null) {
-                approvalStartedLatch.countDown();
-                await(releaseApprovalLatch);
-            }
-            if (failureReason != null) {
-            return PaymentApprovalResult.failed("mock-pg-" + payment.id().value(), failureReason);
-        }
-            return PaymentApprovalResult.approved("mock-pg-" + payment.id().value());
-        }
-
-        void failNext(String failureReason) {
-            this.failureReason = failureReason;
-        }
-
-        void blockApproval(CountDownLatch approvalStartedLatch, CountDownLatch releaseApprovalLatch) {
-            this.approvalStartedLatch = approvalStartedLatch;
-            this.releaseApprovalLatch = releaseApprovalLatch;
-        }
-
-        int approveCount() {
-            return approveCount.get();
-        }
-    }
-
-    private static class FakeIdempotencyRecordPort
-            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
-
-        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
-
-        @Override
-        public Optional<IdempotencyRecord> findByKey(String key) {
-            return Optional.ofNullable(records.get(key));
-        }
-
-        @Override
-        public void save(IdempotencyRecord record) {
-            records.put(record.key(), record);
-        }
-    }
-
-    private static class FakeDomainEventPublisher implements DomainEventPublisherPort {
-
-        private final List<DomainEvent> events = new CopyOnWriteArrayList<>();
-
-        @Override
-        public void publishAll(List<DomainEvent> events) {
-            this.events.addAll(events);
         }
     }
 }

@@ -2,6 +2,8 @@ package com.orderpayment.application.payment.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.idempotency.IdempotencyInFlightException;
@@ -19,31 +21,51 @@ import com.orderpayment.domain.payment.IdempotencyKey;
 import com.orderpayment.domain.payment.PaymentId;
 import com.orderpayment.domain.payment.PaymentStatus;
 import java.time.LocalDateTime;
-import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
+@ExtendWith(MockitoExtension.class)
 class ConfirmPaymentIdempotencyHandlerTest {
 
     private final LocalDateTime now = LocalDateTime.of(2026, 5, 21, 11, 0);
-    private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
     private final ConfirmPaymentRequestHashService requestHashService = new ConfirmPaymentRequestHashService();
     private final ConfirmPaymentIdempotencyResponseSerializer responseSerializer =
             new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper());
-    private final ConfirmPaymentIdempotencyHandler handler = new ConfirmPaymentIdempotencyHandler(
-            idempotencyRecordPort,
-            idempotencyRecordPort,
-            () -> now,
-            requestHashService,
-            responseSerializer
-    );
+
+    @Mock
+    private IdempotencyRecordQueryPort idempotencyRecordQueryPort;
+
+    @Mock
+    private IdempotencyRecordCommandPort idempotencyRecordCommandPort;
+
+    @Captor
+    private ArgumentCaptor<IdempotencyRecord> recordCaptor;
+
+    private ConfirmPaymentIdempotencyHandler handler;
+
+    @BeforeEach
+    void setUp() {
+        handler = new ConfirmPaymentIdempotencyHandler(
+                idempotencyRecordQueryPort,
+                idempotencyRecordCommandPort,
+                () -> now,
+                requestHashService,
+                responseSerializer
+        );
+    }
 
     @Test
-    @DisplayName("resolve creates in-flight record when confirm key is new")
+    @DisplayName("resolve 는 승인 멱등키가 처음이면 처리 중 레코드를 생성한다")
     void resolve_whenKeyIsNew_thenCreateInFlightRecord() {
         ConfirmPaymentCommand command = command(PaymentId.newId(), "confirm-key-1");
+        when(idempotencyRecordQueryPort.findByKey("confirm-key-1")).thenReturn(Optional.empty());
 
         ConfirmPaymentIdempotencyDecision decision = handler.resolve(command);
 
@@ -51,15 +73,17 @@ class ConfirmPaymentIdempotencyHandlerTest {
         assertThat(decision.inFlightRecord().key()).isEqualTo("confirm-key-1");
         assertThat(decision.inFlightRecord().status()).isEqualTo(IdempotencyRecordStatus.IN_FLIGHT);
         assertThat(decision.inFlightRecord().expiresAt()).isEqualTo(now.plusDays(1));
+        verify(idempotencyRecordCommandPort).save(decision.inFlightRecord());
     }
 
     @Test
-    @DisplayName("resolve replays completed response for same key and payment id")
+    @DisplayName("resolve 는 같은 키와 결제 ID의 완료 응답을 재현한다")
     void resolve_whenCompletedRecordMatches_thenReplayResponse() {
         PaymentId paymentId = PaymentId.newId();
         ConfirmPaymentCommand command = command(paymentId, "confirm-key-1");
         ConfirmPaymentResult completedResult = result(paymentId, PaymentStatus.APPROVED);
-        idempotencyRecordPort.save(completedRecord(command, completedResult));
+        when(idempotencyRecordQueryPort.findByKey("confirm-key-1"))
+                .thenReturn(Optional.of(completedRecord(command, completedResult)));
 
         ConfirmPaymentIdempotencyDecision decision = handler.resolve(command);
 
@@ -68,42 +92,53 @@ class ConfirmPaymentIdempotencyHandlerTest {
     }
 
     @Test
-    @DisplayName("resolve rejects same key with different payment id")
+    @DisplayName("resolve 는 같은 키로 다른 결제 ID를 요청하면 충돌 예외를 던진다")
     void resolve_whenSameKeyHasDifferentPaymentId_thenThrowConflict() {
         ConfirmPaymentCommand firstCommand = command(PaymentId.newId(), "confirm-key-1");
-        idempotencyRecordPort.save(completedRecord(firstCommand, result(firstCommand.paymentId(), PaymentStatus.APPROVED)));
+        when(idempotencyRecordQueryPort.findByKey("confirm-key-1"))
+                .thenReturn(Optional.of(completedRecord(
+                        firstCommand,
+                        result(firstCommand.paymentId(), PaymentStatus.APPROVED)
+                )));
 
         assertThatThrownBy(() -> handler.resolve(command(PaymentId.newId(), "confirm-key-1")))
                 .isInstanceOf(IdempotencyKeyConflictException.class);
     }
 
     @Test
-    @DisplayName("resolve rejects in-flight confirm request")
+    @DisplayName("resolve 는 처리 중인 승인 요청이면 예외를 던진다")
     void resolve_whenRecordIsInFlight_thenThrowInFlight() {
         ConfirmPaymentCommand command = command(PaymentId.newId(), "confirm-key-1");
-        idempotencyRecordPort.save(IdempotencyRecord.inFlight(
-                command.idempotencyKey().value(),
-                requestHashService.hash(command),
-                now,
-                now.plusDays(1)
-        ));
+        when(idempotencyRecordQueryPort.findByKey("confirm-key-1"))
+                .thenReturn(Optional.of(IdempotencyRecord.inFlight(
+                        command.idempotencyKey().value(),
+                        requestHashService.hash(command),
+                        now,
+                        now.plusDays(1)
+                )));
 
         assertThatThrownBy(() -> handler.resolve(command))
                 .isInstanceOf(IdempotencyInFlightException.class);
     }
 
     @Test
-    @DisplayName("complete stores confirm response body")
+    @DisplayName("complete 는 결제 승인 응답 본문을 저장한다")
     void complete_whenResultProvided_thenStoreResponseBody() {
         ConfirmPaymentCommand command = command(PaymentId.newId(), "confirm-key-1");
-        ConfirmPaymentIdempotencyDecision decision = handler.resolve(command);
+        IdempotencyRecord inFlightRecord = IdempotencyRecord.inFlight(
+                command.idempotencyKey().value(),
+                requestHashService.hash(command),
+                now,
+                now.plusDays(1)
+        );
         ConfirmPaymentResult result = result(command.paymentId(), PaymentStatus.FAILED);
 
-        handler.complete(decision.inFlightRecord(), result);
+        handler.complete(inFlightRecord, result);
 
-        IdempotencyRecord record = idempotencyRecordPort.findByKey("confirm-key-1").orElseThrow();
-        assertThat(record.status()).isEqualTo(IdempotencyRecordStatus.COMPLETED);
-        assertThat(responseSerializer.deserialize(record.responseBody()).toResult()).isEqualTo(result);
+        verify(idempotencyRecordCommandPort).save(recordCaptor.capture());
+        IdempotencyRecord savedRecord = recordCaptor.getValue();
+        assertThat(savedRecord.status()).isEqualTo(IdempotencyRecordStatus.COMPLETED);
+        assertThat(responseSerializer.deserialize(savedRecord.responseBody()).toResult()).isEqualTo(result);
     }
 
     private IdempotencyRecord completedRecord(ConfirmPaymentCommand command, ConfirmPaymentResult result) {
@@ -130,21 +165,5 @@ class ConfirmPaymentIdempotencyHandlerTest {
                 orderStatus,
                 paymentStatus
         );
-    }
-
-    private static class FakeIdempotencyRecordPort
-            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
-
-        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
-
-        @Override
-        public Optional<IdempotencyRecord> findByKey(String key) {
-            return Optional.ofNullable(records.get(key));
-        }
-
-        @Override
-        public void save(IdempotencyRecord record) {
-            records.put(record.key(), record);
-        }
     }
 }

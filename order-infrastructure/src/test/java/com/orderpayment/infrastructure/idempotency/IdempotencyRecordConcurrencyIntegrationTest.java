@@ -118,7 +118,7 @@ class IdempotencyRecordConcurrencyIntegrationTest extends MysqlContainerTestSupp
     }
 
     @Test
-    @DisplayName("same idempotency key concurrent prepare creates one payment and one record")
+    @DisplayName("같은 멱등키의 동시 결제 준비 요청은 하나의 결제와 하나의 레코드만 생성한다")
     void prepare_whenSameIdempotencyKeyArrivesConcurrently_thenCreateOnePaymentAndOneRecord() throws Exception {
         int requestCount = 2;
         ExecutorService executorService = Executors.newFixedThreadPool(requestCount);

@@ -79,7 +79,7 @@ class OutboxSkipLockedIntegrationTest extends MysqlContainerTestSupport {
     }
 
     @Test
-    @DisplayName("outbox relay workers skip locked event claimed by another worker")
+    @DisplayName("Outbox 릴레이 워커는 다른 워커가 선점한 이벤트를 건너뛴다")
     void publishPendingEvents_whenTwoRelaysRunConcurrently_thenPublishEventOnce() throws Exception {
         publisher.blockNextPublish();
         ExecutorService executorService = Executors.newFixedThreadPool(2);
@@ -109,7 +109,7 @@ class OutboxSkipLockedIntegrationTest extends MysqlContainerTestSupport {
     }
 
     @Test
-    @DisplayName("failed outbox event is retried by next relay polling")
+    @DisplayName("실패한 Outbox 이벤트는 다음 릴레이 폴링에서 재시도된다")
     void publishPendingEvents_whenFailedEventExists_thenRetryAndPublish() {
         publisher.failNext("mock relay failure");
 

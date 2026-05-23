@@ -1,6 +1,11 @@
 package com.orderpayment.application.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderpayment.application.common.port.out.DomainEventPublisherPort;
@@ -39,15 +44,23 @@ import com.orderpayment.domain.payment.PaymentStatus;
 import com.orderpayment.domain.product.ProductId;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class RecoverProcessingPaymentsServiceTest {
 
     private final LocalDateTime now = LocalDateTime.of(2026, 5, 20, 10, 0);
@@ -55,82 +68,115 @@ class RecoverProcessingPaymentsServiceTest {
     private final OrderId orderId = OrderId.newId();
     private final PaymentId paymentId = new PaymentId(UUID.fromString("00000000-0000-0000-0000-000000000901"));
     private final IdempotencyKey idempotencyKey = new IdempotencyKey("payment-request-1");
-    private final FakeOrderPort orderPort = new FakeOrderPort();
-    private final FakePaymentPort paymentPort = new FakePaymentPort();
-    private final FakeInventoryReservationPort inventoryReservationPort = new FakeInventoryReservationPort();
-    private final FakePaymentApprovalQueryPort paymentApprovalQueryPort = new FakePaymentApprovalQueryPort();
-    private final FakeDomainEventPublisher eventPublisher = new FakeDomainEventPublisher();
-    private final FakeIdempotencyRecordPort idempotencyRecordPort = new FakeIdempotencyRecordPort();
-    private final ConfirmPaymentIdempotencyHandler idempotencyHandler = new ConfirmPaymentIdempotencyHandler(
-            idempotencyRecordPort,
-            idempotencyRecordPort,
-            () -> now,
-            new ConfirmPaymentRequestHashService(),
-            new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
-    );
-    private final ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
-            paymentPort,
-            paymentPort,
-            orderPort,
-            orderPort,
-            inventoryReservationPort,
-            inventoryReservationPort,
-            () -> now,
-            eventPublisher,
-            idempotencyHandler
-    );
-    private final RecoverProcessingPaymentsService service = new RecoverProcessingPaymentsService(
-            paymentPort,
-            paymentApprovalQueryPort,
-            transactionService,
-            () -> now,
-            Duration.ofMinutes(5),
-            100
-    );
+    private final Map<OrderId, Order> orders = new LinkedHashMap<>();
+    private final Map<PaymentId, Payment> payments = new LinkedHashMap<>();
+    private final Map<ProductId, Inventory> inventories = new LinkedHashMap<>();
+    private final Map<PaymentId, PaymentApprovalResult> approvalResults = new LinkedHashMap<>();
+    private final Map<String, IdempotencyRecord> idempotencyRecords = new LinkedHashMap<>();
+    private final List<InventoryReservation> reservations = new ArrayList<>();
+    private final List<DomainEvent> publishedEvents = new ArrayList<>();
+
+    @Mock
+    private OrderQueryPort orderQueryPort;
+
+    @Mock
+    private OrderCommandPort orderCommandPort;
+
+    @Mock
+    private PaymentQueryPort paymentQueryPort;
+
+    @Mock
+    private PaymentCommandPort paymentCommandPort;
+
+    @Mock
+    private InventoryReservationQueryPort inventoryReservationQueryPort;
+
+    @Mock
+    private InventoryReservationCommandPort inventoryReservationCommandPort;
+
+    @Mock
+    private PaymentApprovalQueryPort paymentApprovalQueryPort;
+
+    @Mock
+    private DomainEventPublisherPort eventPublisher;
+
+    @Mock
+    private IdempotencyRecordQueryPort idempotencyRecordQueryPort;
+
+    @Mock
+    private IdempotencyRecordCommandPort idempotencyRecordCommandPort;
+
+    private RecoverProcessingPaymentsService service;
+
+    @BeforeEach
+    void setUp() {
+        ConfirmPaymentIdempotencyHandler idempotencyHandler = new ConfirmPaymentIdempotencyHandler(
+                idempotencyRecordQueryPort,
+                idempotencyRecordCommandPort,
+                () -> now,
+                new ConfirmPaymentRequestHashService(),
+                new ConfirmPaymentIdempotencyResponseSerializer(new ObjectMapper())
+        );
+        ConfirmPaymentTransactionService transactionService = new ConfirmPaymentTransactionService(
+                paymentQueryPort,
+                paymentCommandPort,
+                orderQueryPort,
+                orderCommandPort,
+                inventoryReservationQueryPort,
+                inventoryReservationCommandPort,
+                () -> now,
+                eventPublisher,
+                idempotencyHandler
+        );
+        service = new RecoverProcessingPaymentsService(
+                paymentQueryPort,
+                paymentApprovalQueryPort,
+                transactionService,
+                () -> now,
+                Duration.ofMinutes(5),
+                100
+        );
+        stubStatefulPorts();
+    }
 
     @Test
-    @DisplayName("recover approves timed out processing payment when PG result is approved")
+    @DisplayName("recover 는 타임아웃된 처리 중 결제가 PG 승인 상태이면 승인 처리한다")
     void recover_whenProcessingPaymentApprovedByPg_thenApprovePaymentAndConfirmReservation() {
         givenProcessingPaymentTimedOut();
-        paymentApprovalQueryPort.save(paymentId, PaymentApprovalResult.approved("pg-transaction-1"));
+        approvalResults.put(paymentId, PaymentApprovalResult.approved("pg-transaction-1"));
 
         RecoverProcessingPaymentsResult result = service.recover();
 
         assertThat(result.candidateCount()).isEqualTo(1);
         assertThat(result.recoveredCount()).isEqualTo(1);
-        assertThat(paymentPort.getPayment(paymentId).status()).isEqualTo(PaymentStatus.APPROVED);
-        assertThat(paymentPort.getPayment(paymentId).pgTransactionId()).isEqualTo("pg-transaction-1");
-        assertThat(orderPort.getOrder(orderId).status()).isEqualTo(OrderStatus.PAID);
-        assertThat(inventoryReservationPort.firstReservation().status())
-                .isEqualTo(InventoryReservationStatus.CONFIRMED);
-        assertThat(inventoryReservationPort.inventory(productId).heldQuantity()).isZero();
-        assertThat(eventPublisher.events).hasSize(2);
+        assertThat(payments.get(paymentId).status()).isEqualTo(PaymentStatus.APPROVED);
+        assertThat(payments.get(paymentId).pgTransactionId()).isEqualTo("pg-transaction-1");
+        assertThat(orders.get(orderId).status()).isEqualTo(OrderStatus.PAID);
+        assertThat(firstReservation().status()).isEqualTo(InventoryReservationStatus.CONFIRMED);
+        assertThat(inventories.get(productId).heldQuantity()).isZero();
+        assertThat(publishedEvents).hasSize(2);
     }
 
     @Test
-    @DisplayName("recover fails timed out processing payment when PG result is failed")
+    @DisplayName("recover 는 타임아웃된 처리 중 결제가 PG 실패 상태이면 실패 처리한다")
     void recover_whenProcessingPaymentFailedByPg_thenFailPaymentAndReleaseReservation() {
         givenProcessingPaymentTimedOut();
-        paymentApprovalQueryPort.save(
-                paymentId,
-                PaymentApprovalResult.failed("pg-transaction-2", "mock approval failed")
-        );
+        approvalResults.put(paymentId, PaymentApprovalResult.failed("pg-transaction-2", "mock approval failed"));
 
         RecoverProcessingPaymentsResult result = service.recover();
 
         assertThat(result.candidateCount()).isEqualTo(1);
         assertThat(result.recoveredCount()).isEqualTo(1);
-        assertThat(paymentPort.getPayment(paymentId).status()).isEqualTo(PaymentStatus.FAILED);
-        assertThat(paymentPort.getPayment(paymentId).pgTransactionId()).isEqualTo("pg-transaction-2");
-        assertThat(orderPort.getOrder(orderId).status()).isEqualTo(OrderStatus.FAILED);
-        assertThat(inventoryReservationPort.firstReservation().status())
-                .isEqualTo(InventoryReservationStatus.RELEASED);
-        assertThat(inventoryReservationPort.inventory(productId).availableQuantity()).isEqualTo(5);
-        assertThat(eventPublisher.events).hasSize(2);
+        assertThat(payments.get(paymentId).status()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(payments.get(paymentId).pgTransactionId()).isEqualTo("pg-transaction-2");
+        assertThat(orders.get(orderId).status()).isEqualTo(OrderStatus.FAILED);
+        assertThat(firstReservation().status()).isEqualTo(InventoryReservationStatus.RELEASED);
+        assertThat(inventories.get(productId).availableQuantity()).isEqualTo(5);
+        assertThat(publishedEvents).hasSize(2);
     }
 
     @Test
-    @DisplayName("recover leaves processing payment when PG result is unknown")
+    @DisplayName("recover 는 PG 결과를 알 수 없으면 처리 중 결제를 유지한다")
     void recover_whenPgResultUnknown_thenLeavePaymentProcessing() {
         givenProcessingPaymentTimedOut();
 
@@ -138,10 +184,68 @@ class RecoverProcessingPaymentsServiceTest {
 
         assertThat(result.candidateCount()).isEqualTo(1);
         assertThat(result.recoveredCount()).isZero();
-        assertThat(paymentPort.getPayment(paymentId).status()).isEqualTo(PaymentStatus.PROCESSING);
-        assertThat(orderPort.getOrder(orderId).status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
-        assertThat(inventoryReservationPort.firstReservation().status()).isEqualTo(InventoryReservationStatus.HELD);
-        assertThat(eventPublisher.events).isEmpty();
+        assertThat(payments.get(paymentId).status()).isEqualTo(PaymentStatus.PROCESSING);
+        assertThat(orders.get(orderId).status()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        assertThat(firstReservation().status()).isEqualTo(InventoryReservationStatus.HELD);
+        assertThat(publishedEvents).isEmpty();
+    }
+
+    private void stubStatefulPorts() {
+        when(idempotencyRecordQueryPort.findByKey(anyString()))
+                .thenAnswer(invocation -> Optional.ofNullable(idempotencyRecords.get(invocation.getArgument(0))));
+        doAnswer(invocation -> {
+            IdempotencyRecord record = invocation.getArgument(0);
+            idempotencyRecords.put(record.key(), record);
+            return null;
+        }).when(idempotencyRecordCommandPort).save(any(IdempotencyRecord.class));
+        when(paymentQueryPort.findProcessingPaymentsRequestedBefore(any(LocalDateTime.class), anyInt()))
+                .thenAnswer(invocation -> {
+                    LocalDateTime requestedBefore = invocation.getArgument(0);
+                    int limit = invocation.getArgument(1);
+                    return payments.values().stream()
+                            .filter(payment -> payment.status() == PaymentStatus.PROCESSING)
+                            .filter(payment -> payment.approvalRequestedAt() != null)
+                            .filter(payment -> payment.approvalRequestedAt().isBefore(requestedBefore))
+                            .limit(limit)
+                            .toList();
+                });
+        when(paymentApprovalQueryPort.findApprovalResult(any(Payment.class)))
+                .thenAnswer(invocation -> Optional.ofNullable(approvalResults.get(invocation.<Payment>getArgument(0).id())));
+        when(paymentQueryPort.getPaymentForUpdate(any(PaymentId.class)))
+                .thenAnswer(invocation -> payment(invocation.getArgument(0)));
+        when(orderQueryPort.getOrder(any(OrderId.class)))
+                .thenAnswer(invocation -> order(invocation.getArgument(0)));
+        doAnswer(invocation -> {
+            Payment payment = invocation.getArgument(0);
+            payments.put(payment.id(), payment);
+            return null;
+        }).when(paymentCommandPort).savePayment(any(Payment.class));
+        doAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            orders.put(order.id(), order);
+            return null;
+        }).when(orderCommandPort).saveOrder(any(Order.class));
+        when(inventoryReservationQueryPort.findHeldReservationsByOrderId(any(OrderId.class))).thenAnswer(invocation -> {
+            OrderId orderId = invocation.getArgument(0);
+            return reservations.stream()
+                    .filter(reservation -> reservation.orderId().equals(orderId))
+                    .filter(reservation -> reservation.status() == InventoryReservationStatus.HELD)
+                    .toList();
+        });
+        doAnswer(invocation -> {
+            invocation.<List<InventoryReservation>>getArgument(0)
+                    .forEach(reservation -> inventories.get(reservation.productId()).confirm(reservation.quantity()));
+            return null;
+        }).when(inventoryReservationCommandPort).confirmAll(any());
+        doAnswer(invocation -> {
+            invocation.<List<InventoryReservation>>getArgument(0)
+                    .forEach(reservation -> inventories.get(reservation.productId()).release(reservation.quantity()));
+            return null;
+        }).when(inventoryReservationCommandPort).releaseAll(any());
+        doAnswer(invocation -> {
+            publishedEvents.addAll(invocation.getArgument(0));
+            return null;
+        }).when(eventPublisher).publishAll(any());
     }
 
     private void givenProcessingPaymentTimedOut() {
@@ -149,170 +253,33 @@ class RecoverProcessingPaymentsServiceTest {
                 OrderItem.of(productId, "keyboard", Money.won(1000), 2)
         ));
         order.requestPayment();
-        orderPort.saveOrder(order);
+        orders.put(orderId, order);
 
         Payment payment = Payment.ready(paymentId, orderId, Money.won(2000), idempotencyKey);
         payment.startApproval(now.minusMinutes(10));
-        paymentPort.savePayment(payment);
+        payments.put(paymentId, payment);
 
-        InventoryReservation reservation = InventoryReservation.hold(
+        reservations.add(InventoryReservation.hold(
                 InventoryReservationId.newId(),
                 orderId,
                 productId,
                 2,
                 now.plusMinutes(10)
-        );
-        inventoryReservationPort.saveInventory(Inventory.restore(productId, 3, 2));
-        inventoryReservationPort.saveReservation(reservation);
+        ));
+        inventories.put(productId, Inventory.restore(productId, 3, 2));
     }
 
-    private static class FakeOrderPort implements OrderQueryPort, OrderCommandPort {
-
-        private final Map<OrderId, Order> orders = new ConcurrentHashMap<>();
-
-        @Override
-        public Order getOrder(OrderId orderId) {
-            Order order = orders.get(orderId);
-            if (order == null) {
-                throw new DomainException("order not found");
-            }
-            return order;
-        }
-
-        @Override
-        public void saveOrder(Order order) {
-            orders.put(order.id(), order);
-        }
+    private Payment payment(PaymentId paymentId) {
+        return Optional.ofNullable(payments.get(paymentId))
+                .orElseThrow(() -> new DomainException("payment not found"));
     }
 
-    private static class FakePaymentPort implements PaymentQueryPort, PaymentCommandPort {
-
-        private final Map<PaymentId, Payment> paymentsById = new ConcurrentHashMap<>();
-
-        @Override
-        public Payment getPayment(PaymentId paymentId) {
-            Payment payment = paymentsById.get(paymentId);
-            if (payment == null) {
-                throw new DomainException("payment not found");
-            }
-            return payment;
-        }
-
-        @Override
-        public Payment getPaymentForUpdate(PaymentId paymentId) {
-            return getPayment(paymentId);
-        }
-
-        @Override
-        public Optional<Payment> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
-            return paymentsById.values().stream()
-                    .filter(payment -> payment.idempotencyKey().equals(idempotencyKey))
-                    .findFirst();
-        }
-
-        @Override
-        public List<Payment> findProcessingPaymentsRequestedBefore(LocalDateTime requestedBefore, int limit) {
-            return paymentsById.values().stream()
-                    .filter(payment -> payment.status() == PaymentStatus.PROCESSING)
-                    .filter(payment -> payment.approvalRequestedAt() != null)
-                    .filter(payment -> payment.approvalRequestedAt().isBefore(requestedBefore))
-                    .limit(limit)
-                    .toList();
-        }
-
-        @Override
-        public void savePayment(Payment payment) {
-            paymentsById.put(payment.id(), payment);
-        }
+    private Order order(OrderId orderId) {
+        return Optional.ofNullable(orders.get(orderId))
+                .orElseThrow(() -> new DomainException("order not found"));
     }
 
-    private static class FakeInventoryReservationPort
-            implements InventoryReservationQueryPort, InventoryReservationCommandPort {
-
-        private final Map<ProductId, Inventory> inventories = new ConcurrentHashMap<>();
-        private final Map<InventoryReservationId, InventoryReservation> reservations = new ConcurrentHashMap<>();
-
-        @Override
-        public InventoryReservation hold(OrderId orderId, ProductId productId, int quantity, LocalDateTime expiresAt) {
-            throw new UnsupportedOperationException("not used");
-        }
-
-        @Override
-        public List<InventoryReservation> findHeldReservationsByOrderId(OrderId orderId) {
-            return reservations.values().stream()
-                    .filter(reservation -> reservation.orderId().equals(orderId))
-                    .filter(reservation -> reservation.status() == InventoryReservationStatus.HELD)
-                    .toList();
-        }
-
-        @Override
-        public void confirmAll(List<InventoryReservation> reservations) {
-            for (InventoryReservation reservation : reservations) {
-                inventories.get(reservation.productId()).confirm(reservation.quantity());
-            }
-        }
-
-        @Override
-        public void releaseAll(List<InventoryReservation> reservations) {
-            for (InventoryReservation reservation : reservations) {
-                inventories.get(reservation.productId()).release(reservation.quantity());
-            }
-        }
-
-        void saveInventory(Inventory inventory) {
-            inventories.put(inventory.productId(), inventory);
-        }
-
-        void saveReservation(InventoryReservation reservation) {
-            reservations.put(reservation.id(), reservation);
-        }
-
-        Inventory inventory(ProductId productId) {
-            return inventories.get(productId);
-        }
-
-        InventoryReservation firstReservation() {
-            return reservations.values().iterator().next();
-        }
-    }
-
-    private static class FakePaymentApprovalQueryPort implements PaymentApprovalQueryPort {
-
-        private final Map<PaymentId, PaymentApprovalResult> results = new ConcurrentHashMap<>();
-
-        @Override
-        public Optional<PaymentApprovalResult> findApprovalResult(Payment payment) {
-            return Optional.ofNullable(results.get(payment.id()));
-        }
-
-        void save(PaymentId paymentId, PaymentApprovalResult result) {
-            results.put(paymentId, result);
-        }
-    }
-
-    private static class FakeDomainEventPublisher implements DomainEventPublisherPort {
-
-        private final List<DomainEvent> events = new CopyOnWriteArrayList<>();
-
-        @Override
-        public void publishAll(List<DomainEvent> events) {
-            this.events.addAll(events);
-        }
-    }
-
-    private static class FakeIdempotencyRecordPort
-            implements IdempotencyRecordQueryPort, IdempotencyRecordCommandPort {
-
-        private final Map<String, IdempotencyRecord> records = new ConcurrentHashMap<>();
-
-        @Override
-        public Optional<IdempotencyRecord> findByKey(String key) {
-            return Optional.ofNullable(records.get(key));
-        }
-
-        @Override
-        public void save(IdempotencyRecord record) {
-            records.put(record.key(), record);
-        }
+    private InventoryReservation firstReservation() {
+        return reservations.get(0);
     }
 }
